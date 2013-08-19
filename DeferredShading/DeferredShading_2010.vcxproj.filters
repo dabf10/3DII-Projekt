@@ -1,0 +1,166 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns:atg="http://atg.xbox.com" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{8e114980-c1a3-4ada-ad7c-83caadf5daeb}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe</Extensions>
+    </Filter>
+    <Filter Include="DXUT">
+      <UniqueIdentifier>{a43c5c25-0e86-4a20-b64a-883785ff74fd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application">
+      <UniqueIdentifier>{5c11e3a8-e6f3-4e3e-ad99-d9090cf36f66}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{950604c4-ff7d-4a21-98e6-8ef08648c25c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\App">
+      <UniqueIdentifier>{251e089b-295d-47b9-b959-8846cb8523ed}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\Camera">
+      <UniqueIdentifier>{254862ed-4bf8-41d7-b4f3-ce90fc6499cf}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\Model">
+      <UniqueIdentifier>{e3c0788b-afb0-489e-a05b-dd317e679cab}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\OBJLoader">
+      <UniqueIdentifier>{fe05aef4-6597-4c4d-ac0d-a273ec80b8b7}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="DXUT\Optional\directx.ico">
+      <Filter>Resource Files</Filter>
+    </None>
+    <ClInclude Include="DXUT\Core\DXUT.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Core\DXUTDevice11.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Core\DXUTDevice9.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Core\DXUTmisc.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClCompile Include="DXUT\Core\DXUT.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Core\DXUTDevice11.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Core\DXUTDevice9.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Core\DXUTmisc.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClInclude Include="DXUT\Optional\DXUTcamera.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Optional\DXUTgui.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Optional\DXUTres.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Optional\DXUTsettingsdlg.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Optional\SDKmesh.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClInclude Include="DXUT\Optional\SDKmisc.h">
+      <Filter>DXUT</Filter>
+    </ClInclude>
+    <ClCompile Include="DXUT\Optional\DXUTcamera.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Optional\DXUTgui.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Optional\DXUTres.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Optional\DXUTsettingsdlg.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Optional\SDKmesh.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <ClCompile Include="DXUT\Optional\SDKmisc.cpp">
+      <Filter>DXUT</Filter>
+    </ClCompile>
+    <None Include="Shaders\FullScreenQuadTest.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\GBuffer.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\ClearGBuffer.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\DirectionalLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\CombineLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\PointLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\Spotlight.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\SSAO.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\BilateralBlur.fx">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="Shaders\OldFilm.fx">
+      <Filter>Shaders</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="App.cpp">
+      <Filter>Application\App</Filter>
+    </ClCompile>
+    <ClCompile Include="Camera.cpp">
+      <Filter>Application\Camera</Filter>
+    </ClCompile>
+    <ClCompile Include="Model.cpp">
+      <Filter>Application\Model</Filter>
+    </ClCompile>
+    <ClCompile Include="OBJLoader.cpp">
+      <Filter>Application\OBJLoader</Filter>
+    </ClCompile>
+    <ClCompile Include="Main.cpp">
+      <Filter>Application</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="App.h">
+      <Filter>Application\App</Filter>
+    </ClInclude>
+    <ClInclude Include="Camera.h">
+      <Filter>Application\Camera</Filter>
+    </ClInclude>
+    <ClInclude Include="Model.h">
+      <Filter>Application\Model</Filter>
+    </ClInclude>
+    <ClInclude Include="OBJLoader.h">
+      <Filter>Application\OBJLoader</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CLInclude Include="resource.h">
+      <Filter>Resource Files</Filter>
+    </CLInclude>
+    <ResourceCompile Include="DeferredShading.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+  </ItemGroup>
+</Project>
