@@ -956,9 +956,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	}
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
-
-	// Render to back buffer.
-	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+	pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
 
 	//
 	// Render a full-screen quad that combines the light from the light map
@@ -987,44 +985,47 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mCombineLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	}
 
+	// Render to back buffer.
+	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+
 	//
 	// Generate an old-film looking effect
 	//
-	//{
-	//	UINT strides = 20;
-	//	UINT offsets = 0;
-	//	pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-	//	pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
+	{
+		UINT strides = 20;
+		UINT offsets = 0;
+		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
+		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
 
-	//	float sepia = 0.6f;
-	//	float noise = 0.2f;
-	//	float scratch = 0.3f;
-	//	float innerVignetting;
-	//	float outerVignetting;
-	//	float random;
-	//	float timeLapse;
+		float sepia = 0.6f;
+		float noise = 0.06f;
+		float scratch = 0.3f;
+		float innerVignetting = 1.0f - 0.3f;
+		float outerVignetting = 1.4f - 0.3f;
+		float random = (float)rand()/(float)RAND_MAX;
+		float timeLapse = fElapsedTime;
 
-	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mCompositeSRV);
-	//	mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
-	//	mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
-	//	mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
-	//	mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
-	//	mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
-	//	mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
-	//	mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
+		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mCompositeSRV);
+		mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
+		mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
+		mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
+		mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
+		mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
+		mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
+		mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
 
-	//	D3DX11_TECHNIQUE_DESC techDesc;
-	//	mOldFilmTech->GetDesc(&techDesc);
-	//	for (UINT p = 0; p < techDesc.Passes; ++p)
-	//	{
-	//		mOldFilmTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-	//		pd3dImmediateContext->Draw(6, 0);
-	//	}
+		D3DX11_TECHNIQUE_DESC techDesc;
+		mOldFilmTech->GetDesc(&techDesc);
+		for (UINT p = 0; p < techDesc.Passes; ++p)
+		{
+			mOldFilmTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
+			pd3dImmediateContext->Draw(6, 0);
+		}
 
-	//	// Unbind shader resources
-	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
-	//	mOldFilmTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//}
+		// Unbind shader resources
+		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
+		mOldFilmTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	}
 
 	//
 	// Full-screen textured quad
