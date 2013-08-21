@@ -2,13 +2,6 @@
 	==================================================
 	Fler intressanta saker att prova på
 	==================================================
-	Använda djupbuffer som en G-Buffer http://mynameismjp.wordpress.com/2010/09/05/position-from-depth-3/
-	Istället för att använda en sfär som volym för spotlight (fungerar dock säkert helt ok)
-	är det kanske rimligt med en kon (så kan man synligt rendera volymen om man vill).
-	Läs MJP:s inlägg http://www.gamedev.net/topic/533058-deferred-renderer-and-spot-light-volume/
-	och om jag ber TA om hjälp, ta gärna med normal och texcoord och glöm ej: LH! Ta även
-	reda på hur orientering kan skötas; godtyckliga rotationer med eulervinklar är inte alltid så roligt.
-	http://social.msdn.microsoft.com/Forums/en-US/f4d80d25-c947-440e-832c-fdae6cfc8b51/vector-to-rotation-ie-point-models-forward-to-their-direction
 	Man borde kunna instansiera ljus eftersom det rendera som geometri (precis som
 	när man instansierar annan geometri). Kanske även fungerar med quads.
 */
@@ -281,7 +274,7 @@ void App::OnD3D11DestroyDevice( )
 bool App::ModifyDeviceSettings( DXUTDeviceSettings* pDeviceSettings )
 {
 	// I'll manage this myself, thank you very much.
-	//pDeviceSettings->d3d11.AutoCreateDepthStencil = false;
+	pDeviceSettings->d3d11.AutoCreateDepthStencil = false;
 
     return true;
 }
@@ -605,261 +598,11 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		}
 	}
 
-	// Bind the light accumulation buffer as a render target. Using additive blending,
-	// the contribution of every light will be summed and stored in this buffer.
-	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, 0);
-	pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
-
 	//
-	// Render a directional light as a full-screen post-process.
+	// Render lights
 	//
-	{
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-		pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
 
-		XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
-		mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-		mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		mDirectionalLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-		mDirectionalLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
-
-		XMFLOAT3 dir[3] = { XMFLOAT3(0, -1, 1), XMFLOAT3(-1, 0, 1), XMFLOAT3(1, 0, 1) };
-		XMFLOAT3 col[3] = { XMFLOAT3(0.4f, 0.4f, 0.4f), XMFLOAT3(1, 0.3f, 0.15f), XMFLOAT3(0, 0.5f, 1) };
-		
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mDirectionalLightTech->GetDesc(&techDesc);
-
-		//for (UINT l = 0; l < 3; ++l)
-		for (UINT l = 0; l < 1; ++l)
-		{
-			mDirectionalLightFX->GetVariableByName("gLightDirection")->AsVector()->SetFloatVector((float*)&dir[l]);
-			mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&col[l]);
-
-			for (UINT p = 0; p < techDesc.Passes; ++p)
-			{
-				mDirectionalLightTech->GetPassByIndex(p)->Apply(0, pd3dImmediateContext);
-				pd3dImmediateContext->Draw(6, 0);
-			}
-		}
-
-		// Unbind the G-Buffer textures
-		mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-		mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-		mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-		mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-		// Reset blend state to default
-		pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
-	}
-
-	//
-	// Render a point light
-	// TODO: Would be nice to use depth buffer to depth-test light volumes. But
-	// that means the depth buffer would need to be bound both as dsv and srv at
-	// the same time. Direct3D11 should support this I believe.
-	//
-	{
-		pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
-		
-		XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
-
-		// G-Buffer parameters
-		mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-		mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		mPointLightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
-		mPointLightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
-		mPointLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-		mPointLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
-
-		XMFLOAT3 colors[10];
-		colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
-		colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
-		colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
-		colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
-		colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
-		colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
-		colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
-		colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
-		colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
-		colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
-
-		float angle = static_cast<float>( fTime );
-
-		float lightRadiusFirstSet = 12.0f;
-		float lightRadiusSecondSet = 20.0f;
-		float lightIntensityFirstSet = 2.0f;
-		float lightIntensitySecondSet = 1.0f;
-
-		for (UINT i = 0; i < 10; ++i)
-		{
-			XMFLOAT3 position = XMFLOAT3(sinf(i * XM_2PI / 10 + fTime), 0.3f, cosf(i * XM_2PI / 10 + fTime));
-			XMFLOAT3 pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
-
-			// Compute the light world matrix. Scale according to light radius,
-			// and translate it to light position.
-			XMMATRIX sphereWorld = XMMatrixScaling(lightRadiusFirstSet, lightRadiusFirstSet, lightRadiusFirstSet) *
-				XMMatrixTranslation(pos.x, pos.y, pos.z);
-
-			mPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
-			mPointLightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&XMFLOAT3(pos.x, pos.y, pos.z));
-			mPointLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&colors[i]);
-			mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(lightRadiusFirstSet);
-			mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(lightIntensityFirstSet);
-		
-			// Calculate the distance between the camera and light center.
-			XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&pos);
-			XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
-
-			// If we are inside the light volume, draw the sphere's inside face
-			if (XMVectorGetX(cameraToCenterSq) < lightRadiusFirstSet * lightRadiusFirstSet)
-				pd3dImmediateContext->RSSetState( mCullFront );
-			else
-				pd3dImmediateContext->RSSetState( mCullBack );
-
-			// Render the light volume.
-			D3DX11_TECHNIQUE_DESC techDesc;
-			mPointLightTech->GetDesc( &techDesc );
-			for (UINT p = 0; p< techDesc.Passes; ++p)
-			{
-				mPointLightTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-				mSphereModel->Render( pd3dImmediateContext );
-			}
-
-			position = XMFLOAT3(cosf(i * XM_2PI / 10 + fTime), -0.6f, sinf(i * XM_2PI / 10 + fTime));
-			pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
-
-			// Compute the light world matrix. Scale according to light radius,
-			// and translate it to light position.
-			sphereWorld = XMMatrixScaling(lightRadiusSecondSet, lightRadiusSecondSet, lightRadiusSecondSet) *
-				XMMatrixTranslation(pos.x, pos.y, pos.z);
-
-			mPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
-			mPointLightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&XMFLOAT3(pos.x, pos.y, pos.z));
-			mPointLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&colors[i]);
-			mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(lightRadiusSecondSet);
-			mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(lightIntensitySecondSet);
-
-			// Calculate the distance between the camera and light center.
-			vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&pos);
-			cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
-
-			// If we are inside the light volume, draw the sphere's inside face
-			if (XMVectorGetX(cameraToCenterSq) < lightRadiusSecondSet * lightRadiusSecondSet)
-				pd3dImmediateContext->RSSetState( mCullFront );
-			else
-				pd3dImmediateContext->RSSetState( mCullBack );
-
-			// Render the light volume.
-			for (UINT p = 0; p < techDesc.Passes; ++p)
-			{
-				mPointLightTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-				mSphereModel->Render( pd3dImmediateContext );
-			}
-		}
-
-		// Unbind shader resource views
-		mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-		mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-		mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-		mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-		// Reset blend and rasterizer states to default
-		pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
-		pd3dImmediateContext->RSSetState( 0 );
-	}
-
-	//
-	// Render a spotlight
-	//
-	{
-		pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
-
-		float lightRadius = 15.0f;
-		float lightIntensity = 1.0f;
-		float angleCosine = cosf(XMConvertToRadians(10));
-		float decayExponent = 1.0f;
-		XMFLOAT3 lightColor(0.0f, 0.4f, 0.0f);
-		XMFLOAT3 lightPosition(0.0f, 10.0f, 0.0f);
-		XMVECTOR direction = XMVectorSet(0, 0, 1, 0);
-		direction = XMVectorSetX(direction, sinf(static_cast<float>( fTime )));
-		direction = XMVectorSetZ(direction, cosf(static_cast<float>( fTime )));
-		direction = XMVector3Normalize(direction);
-		
-		XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
-
-		// G-Buffer parameters
-		mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-		mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		mSpotlightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
-		mSpotlightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
-		mSpotlightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-		mSpotlightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
-		
-		float xyScale = tanf(XMConvertToRadians(10)) * lightRadius;
-		XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, lightRadius) *
-			XMMatrixTranslation(lightPosition.x, lightPosition.y, lightPosition.z);
-
-		mSpotlightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&coneWorld);
-		mSpotlightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&lightPosition);
-		mSpotlightFX->GetVariableByName("gDirection")->AsVector()->SetFloatVector((float*)&direction);
-		mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&lightColor);
-		mSpotlightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(lightRadius);
-		mSpotlightFX->GetVariableByName("gAngleCosine")->AsScalar()->SetFloat(angleCosine);
-		mSpotlightFX->GetVariableByName("gDecayExponent")->AsScalar()->SetFloat(decayExponent);
-		mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(lightIntensity);
-
-		bool inside = false;
-		float baseRadius = tanf(XMConvertToRadians(10)) * lightRadius;
-		XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&lightPosition);
-		// Project the vector from cone tip to test point onto light direction
-		// to find the point's distance along the axis.
-		XMVECTOR coneDist = XMVector3Dot(tipToPoint, direction);
-		// Reject values outside 0 <= coneDist <= coneHeight
-		if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= lightRadius)
-		{
-			// Radius at point.
-			float radiusAtPoint = (XMVectorGetX(coneDist) / lightRadius) * baseRadius;
-			// Calculate the point's orthogonal distance to axis and compare to
-			// cone radius (radius at point).
-			XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * direction;
-			XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
-
-			inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
-		}
-
-		// If we are inside the light volume, draw the cone's inside face.
-		if (inside)
-		{
-			pd3dImmediateContext->RSSetState( mCullFront );
-		}
-		else
-			pd3dImmediateContext->RSSetState( mCullBack );
-
-		// Render the light volume.
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mSpotlightTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mSpotlightTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-			mConeModel->Render( pd3dImmediateContext );
-		}
-
-		// Unbind shader resources
-		mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-		mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-		mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-		mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-		// Reset blend and rasterizer states to default
-		pd3dImmediateContext->OMSetBlendState( 0, 0, 0xffffffff );
-		pd3dImmediateContext->RSSetState( 0 );
-	}
+	RenderLights( pd3dImmediateContext, fTime );
 
 	pd3dImmediateContext->OMSetRenderTargets(1, &mAOMapRT, 0);
 	pd3dImmediateContext->ClearRenderTargetView(mAOMapRT, clearColor);
@@ -956,7 +699,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	}
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
-	pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
+	//pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
+	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
 	//
 	// Render a full-screen quad that combines the light from the light map
@@ -991,41 +735,41 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//
 	// Generate an old-film looking effect
 	//
-	{
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
+	//{
+	//	UINT strides = 20;
+	//	UINT offsets = 0;
+	//	pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
+	//	pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
 
-		float sepia = 0.6f;
-		float noise = 0.06f;
-		float scratch = 0.3f;
-		float innerVignetting = 1.0f - 0.3f;
-		float outerVignetting = 1.4f - 0.3f;
-		float random = (float)rand()/(float)RAND_MAX;
-		float timeLapse = fElapsedTime;
+	//	float sepia = 0.6f;
+	//	float noise = 0.06f;
+	//	float scratch = 0.3f;
+	//	float innerVignetting = 1.0f - 0.3f;
+	//	float outerVignetting = 1.4f - 0.3f;
+	//	float random = (float)rand()/(float)RAND_MAX;
+	//	float timeLapse = fElapsedTime;
 
-		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mCompositeSRV);
-		mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
-		mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
-		mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
-		mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
-		mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
-		mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
-		mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
+	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mCompositeSRV);
+	//	mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
+	//	mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
+	//	mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
+	//	mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
+	//	mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
+	//	mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
+	//	mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
 
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mOldFilmTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mOldFilmTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-			pd3dImmediateContext->Draw(6, 0);
-		}
+	//	D3DX11_TECHNIQUE_DESC techDesc;
+	//	mOldFilmTech->GetDesc(&techDesc);
+	//	for (UINT p = 0; p < techDesc.Passes; ++p)
+	//	{
+	//		mOldFilmTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
+	//		pd3dImmediateContext->Draw(6, 0);
+	//	}
 
-		// Unbind shader resources
-		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
-		mOldFilmTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	}
+	//	// Unbind shader resources
+	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
+	//	mOldFilmTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//}
 
 	//
 	// Full-screen textured quad
@@ -1033,6 +777,12 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	// Specify 1 or 4.
 	UINT numImages = 0;
+
+	if (GetAsyncKeyState(VK_NUMPAD1) & 0x8000)
+		numImages = 1;
+	else if (GetAsyncKeyState(VK_NUMPAD4) & 0x8000)
+		numImages = 4;
+
 	if (numImages)
 	{
 		// The first code is just to easily display 1 full screen image or
@@ -1209,73 +959,21 @@ void App::OnMouseMove(WPARAM btnState, int x, int y)
 
 bool App::BuildFX(ID3D11Device *device)
 {
-	DWORD shaderFlags = D3D10_SHADER_ENABLE_STRICTNESS;
-#if defined(DEBUG) || defined(_DEBUG)
-	shaderFlags |= D3D10_SHADER_DEBUG;
-	//shaderFlags |= D3D10_SHADER_SKIP_OPTIMIZATION;
-#endif
-
-	ID3D10Blob *compiledShader;
-	ID3D10Blob *errorMsgs;
-	HRESULT hr;
-
 	//
 	// Full-screen quad
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/FullScreenQuadTest.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/FullScreenQuadTest.fx", &mQuadFX ))
 		return false;
-	}
 
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mQuadFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
-
-	mQuadTech = mQuadFX->GetTechniqueByIndex(0);
+	mQuadTech = mQuadFX->GetTechniqueByIndex( 0 );
 
 	//
 	// GBuffer
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/GBuffer.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/GBuffer.fx", &mFillGBufferFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mFillGBufferFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mFillGBufferTech = mFillGBufferFX->GetTechniqueByIndex(0);
 
@@ -1283,29 +981,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// ClearGBuffer
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/ClearGBuffer.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/ClearGBuffer.fx", &mClearGBufferFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mClearGBufferFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mClearGBufferTech = mClearGBufferFX->GetTechniqueByIndex(0);
 
@@ -1313,29 +990,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// DirectionalLight
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/DirectionalLight.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/DirectionalLight.fx", &mDirectionalLightFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mDirectionalLightFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mDirectionalLightTech = mDirectionalLightFX->GetTechniqueByIndex(0);
 
@@ -1343,29 +999,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// CombineLight
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/CombineLight.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/CombineLight.fx", &mCombineLightFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mCombineLightFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mCombineLightTech = mCombineLightFX->GetTechniqueByIndex(0);
 
@@ -1373,29 +1008,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// PointLight
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/PointLight.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/PointLight.fx", &mPointLightFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mPointLightFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mPointLightTech = mPointLightFX->GetTechniqueByIndex(0);
 
@@ -1403,29 +1017,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// Spotlight
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/Spotlight.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/Spotlight.fx", &mSpotlightFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mSpotlightFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mSpotlightTech = mSpotlightFX->GetTechniqueByIndex(0);
 
@@ -1433,29 +1026,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// SSAO
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/SSAO.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/SSAO.fx", &mAOMapFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mAOMapFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	mAOMapTech = mAOMapFX->GetTechniqueByIndex(0);
 
@@ -1463,36 +1035,34 @@ bool App::BuildFX(ID3D11Device *device)
 	// BilateralBlur
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/BilateralBlur.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
-
-	// errorMsgs can store errors or warnings.
-	if (errorMsgs)
-	{
-		MessageBoxA(0, (char*)errorMsgs->GetBufferPointer(), "D3DX11CompileFromFile", MB_OK);
-		SAFE_RELEASE(errorMsgs);
+	if (!CompileShader( device, "Shaders/BilateralBlur.fx", &mBilateralBlurFX ))
 		return false;
-	}
-
-	// Even if there are no error messages, check to make sure there were no other errors.
-	if (FAILED(hr))
-	{
-		DXTraceA(__FILE__, __LINE__, hr, "D3DX11CompileFromFile", true);
-		return false;
-	}
-
-	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mBilateralBlurFX))) return false;
-
-	// Done with compiled shader.
-	SAFE_RELEASE(compiledShader);
 
 	//
 	// OldFilm
 	//
 
-	hr = D3DX11CompileFromFileA("Shaders/OldFilm.fx", 0, 0, "", "fx_5_0",
-		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0);
+	if (!CompileShader( device, "Shaders/OldFilm.fx", &mOldFilmFX ))
+		return false;
+
+	mOldFilmTech = mOldFilmFX->GetTechniqueByIndex( 0 );
+
+	return true;
+}
+
+bool App::CompileShader( ID3D11Device *device, const char *filename, ID3DX11Effect **fx )
+{
+	DWORD shaderFlags = D3D10_SHADER_ENABLE_STRICTNESS;
+#if defined(DEBUG) || defined(_DEBUG)
+	shaderFlags |= D3D10_SHADER_DEBUG;
+#endif
+
+	ID3D10Blob *compiledShader;
+	ID3D10Blob *errorMsgs;
+	HRESULT hr;
+
+	hr = D3DX11CompileFromFileA( filename, 0, 0, "", "fx_5_0",
+		shaderFlags, 0, 0, &compiledShader, &errorMsgs, 0 );
 
 	// errorMsgs can store errors or warnings.
 	if (errorMsgs)
@@ -1510,12 +1080,10 @@ bool App::BuildFX(ID3D11Device *device)
 	}
 
 	if (FAILED(D3DX11CreateEffectFromMemory(compiledShader->GetBufferPointer(),
-		compiledShader->GetBufferSize(), 0, device, &mOldFilmFX))) return false;
+		compiledShader->GetBufferSize(), 0, device, fx))) return false;
 
 	// Done with compiled shader.
 	SAFE_RELEASE(compiledShader);
-
-	mOldFilmTech = mOldFilmFX->GetTechniqueByIndex( 0 );
 
 	return true;
 }
@@ -1590,27 +1158,14 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	texDesc.SampleDesc.Quality = 0;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 
-	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc;
-	rtvDesc.Texture2D.MipSlice = 0;
-	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-	srvDesc.Texture2D.MipLevels = 1;
-	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-
 	//
 	// Color
 	//
 
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	
-	rtvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateRenderTargetView( tex, &rtvDesc, &mColorRT ) );
-
-	srvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mColorSRV ) );
+	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mColorRT ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mColorSRV ) );
 	
 	// Views saves reference
 	SAFE_RELEASE( tex );
@@ -1619,15 +1174,10 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	// Normal
 	//
 
-	//texDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-
-	rtvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateRenderTargetView( tex, &rtvDesc, &mNormalRT ) );
-
-	srvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mNormalSRV ) );
+	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mNormalRT ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mNormalSRV ) );
 	
 	// Views saves reference
 	SAFE_RELEASE( tex );
@@ -1638,12 +1188,8 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex) );
-
-	rtvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateRenderTargetView( tex, &rtvDesc, &mLightRT ) );
-
-	srvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mLightSRV ) );
+	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
 	
 	// Views saves reference
 	SAFE_RELEASE( tex );
@@ -1652,9 +1198,14 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	// Composite
 	//
 
+	// TODO: Is it possible to render stuff to the regular render target,
+	// and use that as input for post-processing so that we don't need this
+	// intermediate one? It seems strange though, to use a resource as both
+	// render target and shader input at the same time.
+	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, 0, &mCompositeRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, 0, &mCompositeSRV ) );
+	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mCompositeRT ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mCompositeSRV ) );
 
 	// Views saves reference
 	SAFE_RELEASE( tex );
@@ -1665,27 +1216,21 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	
 	texDesc.Width = mBackBufferSurfaceDesc->Width / 2;
 	texDesc.Height = mBackBufferSurfaceDesc->Height / 2;
-	texDesc.Format = DXGI_FORMAT_R16_UNORM;
-	//texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex) );
-
-	rtvDesc.Format = texDesc.Format;
-	//V_RETURN( device->CreateRenderTargetView( tex, &rtvDesc, &mAOMapRT ) );
+	texDesc.Format = DXGI_FORMAT_R8_UNORM;
+	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
 	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mAOMapRT ) );
-
-	srvDesc.Format = texDesc.Format;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mAOMapSRV ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mAOMapSRV ) );
 	
 	// Views saves reference
 	SAFE_RELEASE( tex );
 
 	//
-	// AO Intermediate Blur
+	// Ambient Occlusion Intermediate Blur
 	//
-	
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex) );
-	V_RETURN( device->CreateRenderTargetView( tex, &rtvDesc, &mAOIntermediateBlurRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mAOIntermediateBlurSRV ) );
+
+	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
+	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mAOIntermediateBlurRT ) );
+	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mAOIntermediateBlurSRV ) );
 	
 	// Views saves reference
 	SAFE_RELEASE( tex );
@@ -1707,7 +1252,11 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	dsvDesc.Texture2D.MipSlice = 0;
 	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
 
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
 	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mMainDepthSRV ) );
 
 	// Views saves reference
@@ -1715,4 +1264,232 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 
 
 	return S_OK;
+}
+
+void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction )
+{
+	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mDirectionalLightFX->GetVariableByName("gLightDirection")->AsVector()->SetFloatVector((float*)&direction);
+
+	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Draw( 6, 0 );
+}
+
+// TODO: Would be nice to use depth buffer to depth-test light volumes. But
+// that means the depth buffer would need to be bound both as dsv and srv at
+// the same time. Direct3D11 should support this I believe.
+void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, float radius, float intensity )
+{
+	// Compute the light world matrix. Scale according to light radius,
+	// and translate it to light position.
+	XMMATRIX sphereWorld = XMMatrixScaling(radius, radius, radius) *
+		XMMatrixTranslation(position.x, position.y, position.z);
+
+	mPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
+	mPointLightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&position);
+	mPointLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
+	mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
+		
+	// Calculate the distance between the camera and light center.
+	XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
+
+	// If we are inside the light volume, draw the sphere's inside face
+	if (XMVectorGetX(cameraToCenterSq) < radius * radius)
+		pd3dImmediateContext->RSSetState( mCullFront );
+	else
+		pd3dImmediateContext->RSSetState( mCullBack );
+
+	// Render the light volume.
+	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mSphereModel->Render( pd3dImmediateContext );
+}
+
+void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
+		float angleDeg, float decayExponent )
+{
+	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
+	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
+
+	// Construct the cone world matrix.
+	// Add a small epsilon to x because if the light is aimed straight up, the
+	// rotation matrix is gonna have a bad time.
+	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
+	float angleRad = XMConvertToRadians(angleDeg);
+	float xyScale = tanf(angleRad) * radius;
+	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, radius) *
+		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
+		XMMatrixTranslation(position.x, position.y, position.z);
+
+	mSpotlightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&coneWorld);
+	mSpotlightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&position);
+	mSpotlightFX->GetVariableByName("gDirection")->AsVector()->SetFloatVector((float*)&directionXM);
+	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mSpotlightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
+	mSpotlightFX->GetVariableByName("gAngleCosine")->AsScalar()->SetFloat(cosf(angleRad));
+	mSpotlightFX->GetVariableByName("gDecayExponent")->AsScalar()->SetFloat(decayExponent);
+	mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
+
+	// Test to check if the camera is inside light volume.
+	bool inside = false;
+	XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	// Project the vector from cone tip to test point onto light direction
+	// to find the point's distance along the axis.
+	XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
+	// Reject values outside 0 <= coneDist <= coneHeight
+	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= radius)
+	{
+		// Radius at point.
+		float radiusAtPoint = (XMVectorGetX(coneDist) / radius) * xyScale;
+		// Calculate the point's orthogonal distance to axis and compare to
+		// cone radius (radius at point).
+		XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
+		XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
+
+		inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
+	}
+
+	// If we are inside the light volume, draw the cone's inside face.
+	if (inside)
+	{
+		pd3dImmediateContext->RSSetState( mCullFront );
+	}
+	else
+		pd3dImmediateContext->RSSetState( mCullBack );
+
+	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mConeModel->Render( pd3dImmediateContext );
+}
+
+void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
+{
+	// Bind the light accumulation buffer as a render target. Using additive blending,
+	// the contribution of every light will be summed and stored in this buffer.
+	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, 0);
+	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
+	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
+	
+	// Common for every light
+	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
+
+	//
+	// Directional light stuff
+	//
+
+	UINT strides = 20;
+	UINT offsets = 0;
+	pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
+	pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
+
+	// Set shader variables common for every directional light
+	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
+	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mDirectionalLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
+	mDirectionalLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
+
+	// Render directional lights
+	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(0.4f, 0.4f, 0.4f), XMFLOAT3(0, -1, 1) );
+
+	// Unbind the G-Buffer textures
+	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render point lights
+	//
+	
+	// Set shader variables common for every point light
+	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
+	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mPointLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
+	mPointLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
+	mPointLightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
+	mPointLightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+
+	XMFLOAT3 colors[10];
+	colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
+	colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
+	colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
+	colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
+	colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
+	colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
+	colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
+	colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
+	colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
+	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
+
+	float angle = static_cast<float>( fTime );
+
+	float lightRadiusFirstSet = 12.0f;
+	float lightRadiusSecondSet = 20.0f;
+	float lightIntensityFirstSet = 2.0f;
+	float lightIntensitySecondSet = 1.0f;
+
+	for (UINT i = 0; i < 10; ++i)
+	{
+		XMFLOAT3 position = XMFLOAT3(sinf(i * XM_2PI / 10 + fTime), 0.3f, cosf(i * XM_2PI / 10 + fTime));
+		XMFLOAT3 pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
+
+		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
+
+		position = XMFLOAT3(cosf(i * XM_2PI / 10 + fTime), -0.6f, sinf(i * XM_2PI / 10 + fTime));
+		pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
+
+		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusSecondSet, lightIntensitySecondSet );
+	}
+
+	// Unbind the G-Buffer textures
+	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render spotlights
+	//
+	
+	XMFLOAT3 color(0.0f, 0.4f, 0.0f);
+	XMFLOAT3 position(0.0f, 10.0f, 0.0f);
+	XMFLOAT3 direction(0.0f, 0.0f, 1.0f);
+	float radius = 15.0f;
+	float intensity = 1.0f;
+	float angleDeg = 10.0f;
+	float decayExponent = 1.0f;
+
+	direction.x = sinf(static_cast<float>( fTime ));
+	direction.z = cosf(static_cast<float>( fTime ));
+	
+	// Set shader variables common for every spotlight
+	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
+	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mSpotlightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
+	mSpotlightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+	mSpotlightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
+	mSpotlightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
+
+	RenderSpotlight( pd3dImmediateContext, color, position, direction, radius,
+		intensity, angleDeg, decayExponent );
+
+	// Unbind G-Buffer textures
+	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Final stuff
+	//
+
+	// Reset blend and rasterizer states to default
+	pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
+	pd3dImmediateContext->RSSetState( 0 );
 }

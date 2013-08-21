@@ -80,15 +80,21 @@ private:
 
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
-	bool BuildVertexLayout(ID3D11Device *device);
-	bool BuildFX(ID3D11Device *device);
+	bool BuildVertexLayout( ID3D11Device *device );
+	bool BuildFX( ID3D11Device *device );
+	bool CompileShader( ID3D11Device *device, const char *filename, ID3DX11Effect **fx );
 
 	void RenderText();
 
 	HRESULT CreateGBuffer( ID3D11Device *device, UINT width, UINT height );
-	//void RenderDirectionalLight( XMFLOAT3 color, XMFLOAT3 direction );
-	//void RenderPointLight( XMFLOAT3 color, XMFLOAT3 position, float radius, float intensity );
-	//void RenderSpotlight( XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity, float angleCosine, float decayExponent );
+	void RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
+	void RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext,
+		XMFLOAT3 color, XMFLOAT3 direction );
+	void RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, float radius, float intensity );
+	void RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
+		float angle, float decayExponent );
 
 	void Blur( ID3D11ShaderResourceView *inputSRV,
 		ID3D11RenderTargetView *outputRTV, bool horizontalBlur,
