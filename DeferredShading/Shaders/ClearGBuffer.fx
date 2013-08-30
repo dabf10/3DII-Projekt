@@ -1,5 +1,6 @@
-// Set G-Buffer render targets and render a full screen quad to clear G-Buffer
-// with default values.
+// ############################################################################
+// Simply outputs data to clear G-Buffer render targets to default values.
+// ############################################################################
 
 struct VS_IN
 {
@@ -14,6 +15,7 @@ struct VS_OUT
 
 VS_OUT VS( VS_IN input )
 {
+	// Just pass position on, it's already in NDC space.
 	VS_OUT output = (VS_OUT)0;
 
 	output.Pos = float4(input.Pos, 1.0f);
@@ -23,10 +25,8 @@ VS_OUT VS( VS_IN input )
 
 struct PS_OUT
 {
-	// TODO: Den sista behöver kanske bara vara float.
 	float4 Color : SV_TARGET0;
 	float4 Normal : SV_TARGET1;
-	//float4 Depth : SV_TARGET2;
 };
 
 PS_OUT PS( VS_OUT input )
@@ -41,9 +41,6 @@ PS_OUT PS( VS_OUT input )
 
 	// No specular power
 	output.Normal.a = 0.0f;
-
-	// Max depth
-	//output.Depth = 1.0f;
 
 	return output;
 }

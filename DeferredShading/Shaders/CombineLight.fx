@@ -1,3 +1,9 @@
+// ############################################################################
+// Calculates lit color by sampling diffuse color (from G-Buffer) and light
+// intensity (from light map aquired by additively rendering lights). This data
+// is combined in order to calculate a lit pixel.
+// ############################################################################
+
 Texture2D gColorMap;
 Texture2D gLightMap;
 

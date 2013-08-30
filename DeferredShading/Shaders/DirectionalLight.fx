@@ -1,12 +1,9 @@
+// ############################################################################
 // Output the diffuse light (which may be colored), to the rgb channels, and
 // the specular light (which will always be considered white), to the alpha channel.
-// When combining these in the end, we will use the equation
-//			FinalColor = DiffuseColor * DiffuseLight + SpecularLight
+// ############################################################################
 
-// Property of directional light
 float3 gLightDirection;
-
-// Property of directional light
 float3 gLightColor;
 
 // Position of the camera, used for specular light calculation
@@ -56,6 +53,7 @@ struct VS_OUT
 
 VS_OUT VS( VS_IN input )
 {
+	// Pass on through, position already in NDC space.
 	VS_OUT output = (VS_OUT)0;
 
 	output.PosH = float4(input.PosH, 1.0f);
@@ -68,7 +66,6 @@ float4 PS( VS_OUT input ) : SV_TARGET
 {
 	// Get the data we need out of the G-Buffer.
 
-	// Normal data
 	float4 normalData = gNormalMap.Sample( gNormalSampler, input.TexC );
 	// Transform normal back into [-1,1] range
 	float3 normal = 2.0f * normalData.xyz - 1.0f;
@@ -81,7 +78,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// For specular lighting, we need to have the vector from the camera to the
 	// point being shaded, alas, we need the position. Right now we have the
 	// depth in gDepthMap, and position on the screen in the [0,1]x[0,1] range,
-	// which comes from the texture coordinates. This will transformed into
+	// which comes from the texture coordinates. This will be transformed into
 	// screen coordinates, which are in the [-1,1]x[-1,1] range, and then using
 	// the gInvViewProj matrix, we get back into world coordinates.
 

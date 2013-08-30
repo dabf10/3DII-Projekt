@@ -406,7 +406,7 @@ bool App::Init( )
 
 	XMStoreFloat4x4( &mFloorWorld, XMMatrixIdentity() );
 
-	uniformScaleFactor = 10.0f;
+	uniformScaleFactor = 1.0f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
 	rotation = XMMatrixRotationY(XMConvertToRadians(0));
 	translation = XMMatrixTranslation(0, 0, 0);
@@ -616,31 +616,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		UINT offsets = 0;
 		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
 		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
-		//
-		// Hemispherical using Poisson-Disk sampling in screen-space
-		//
-
-		//XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
-		//XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(mCamera.View()), mCamera.View());
-		//float distanceThreshold = 1.0f;
-		//float radius = 0.02f;
-		//XMFLOAT2 filterRadius(radius, radius);
-
-		//mAOMapFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		//mAOMapFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		//mAOMapFX->GetVariableByName("gInvViewProjection")->AsMatrix()->SetMatrix((float*)&invViewProj);
-		//mAOMapFX->GetVariableByName("gInvView")->AsMatrix()->SetMatrix((float*)&invView);
-		//mAOMapFX->GetVariableByName("gDistanceThreshold")->AsScalar()->SetFloat(distanceThreshold);
-		//mAOMapFX->GetVariableByName("gFilterRadius")->AsVector()->SetFloatVector((float*)&filterRadius);
-
-		//
-		// My implementation
-		//
 		
 		float offset = 18.0f;
 		float aoStart = 0.1f;
-		float hemisphereRadius = 1.0f;
+		float hemisphereRadius = 1.5f;
 
 		XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
 
@@ -653,29 +632,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mAOMapFX->GetVariableByName("gInvViewProjection")->AsMatrix()->SetMatrix((float*)&invViewProj);
 		mAOMapFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
 		mAOMapFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
-		
-		//
-		// Hemispherical using noise map from gamerendering.com
-		//
-
-		//float totStrength = 1.38f;
-		//float strength = 0.07f;
-		//float offset = 18.0f;
-		//float falloff = 0.000002f;
-		//float rad = 0.006f;
-
-		//XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
-
-		//mAOMapFX->GetVariableByName("gRandomNormals")->AsShaderResource()->SetResource(mRandomNormalsSRV);
-		//mAOMapFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		//mAOMapFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		//mAOMapFX->GetVariableByName("gTotStrength")->AsScalar()->SetFloat(totStrength);
-		//mAOMapFX->GetVariableByName("gStrength")->AsScalar()->SetFloat(strength);
-		//mAOMapFX->GetVariableByName("gOffset")->AsScalar()->SetFloat(offset);
-		//mAOMapFX->GetVariableByName("gFalloff")->AsScalar()->SetFloat(falloff);
-		//mAOMapFX->GetVariableByName("gRad")->AsScalar()->SetFloat(rad);
-		//mAOMapFX->GetVariableByName("gInvViewProjection")->AsMatrix()->SetMatrix((float*)&invViewProj);
-		//mAOMapFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
 
 		D3DX11_TECHNIQUE_DESC techDesc;
 		mAOMapTech->GetDesc(&techDesc);

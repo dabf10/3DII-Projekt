@@ -66,9 +66,6 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// The texture coordinates need to be in [0,1]x[0,1]
 	float2 texCoord = 0.5f * (float2(input.ScreenPos.x, -input.ScreenPos.y) + 1);
 
-	// TODO: Tror inte man behöver matcha texel med pixel med halv pixelstorlek,
-	// men annars är det texCoord -= halfPixel;
-
 	// Get normal data from gNormalMap
 	float4 normalData = gNormalMap.Sample( gNormalSampler, texCoord );
 	// Transform normal back into [-1,1] range

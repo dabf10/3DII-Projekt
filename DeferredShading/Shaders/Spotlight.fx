@@ -106,8 +106,6 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float SdL = dot(gDirection, -lightVector);
 	if (SdL > gAngleCosine)
 	{
-		//float spotIntensity = pow(SdL, gDecayExponent);
-		//float spotIntensity = pow(abs(SdL), gDecayExponent);
 		float spotIntensity = pow(max(SdL, 0.0f), gDecayExponent);
 
 		// Compute diffuse light

@@ -1,3 +1,7 @@
+// ############################################################################
+// Simple shader used to display a fullscreen texture.
+// ############################################################################
+
 Texture2D gTexture;
 
 SamplerState gPointSam

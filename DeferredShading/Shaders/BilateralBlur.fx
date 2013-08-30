@@ -52,6 +52,9 @@ VS_OUT VS( VS_IN input )
 	return output;
 }
 
+// Performs an edge-preserving blur by sampling neighbor fragments on either side
+// of the rasterized fragment horizontally or vertically. The neighbor fragments
+// are summed together using a weight, which results in a blurred fragment.
 float4 PS( VS_OUT input, uniform bool gHorizontalBlur ) : SV_TARGET
 {
 	float2 texOffset;
@@ -88,7 +91,6 @@ float4 PS( VS_OUT input, uniform bool gHorizontalBlur ) : SV_TARGET
 		// normal or depth), then we assume we are sampling across a discontinuity.
 		// We discard such samples from the blur.
 
-		// TODO: dot < 0.2 || abs > 0.2 -> weight = 0? Will that work?
 		if (dot(neighborNormal, centerNormal) >= 0.8f &&
 			abs(neighborDepth - centerDepth) <= 0.2)
 		{
