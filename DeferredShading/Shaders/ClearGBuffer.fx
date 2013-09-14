@@ -2,23 +2,18 @@
 // Simply outputs data to clear G-Buffer render targets to default values.
 // ############################################################################
 
-struct VS_IN
-{
-	float3 Pos : POSITION0;
-	float2 TexC : TEXCOORD; // Not used, but to be able to use the same VB as texquad
-};
-
 struct VS_OUT
 {
-	float4 Pos : SV_POSITION;
+	float4 PosH : SV_POSITION;
 };
 
-VS_OUT VS( VS_IN input )
+VS_OUT VS( uint VertexID : SV_VertexID )
 {
-	// Just pass position on, it's already in NDC space.
 	VS_OUT output = (VS_OUT)0;
 
-	output.Pos = float4(input.Pos, 1.0f);
+	output.PosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	output.PosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	output.PosH.zw = 1.0f;
 
 	return output;
 }

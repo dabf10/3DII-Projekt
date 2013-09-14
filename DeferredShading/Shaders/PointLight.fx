@@ -1,12 +1,11 @@
-float4x4 gWorld; // TODO: Ersätt med gWVP
-float4x4 gView;
-float4x4 gProjection;
+float4x4 gWVP;
+float4x4 gWorldView;
 float3 gLightColor;
-float3 gCameraPosition; // Used for specular light
-float4x4 gInvViewProj; // Used to compute world-pos
-float3 gLightPosition;
+float3 gLightPositionVS;
 float gLightRadius; // How far the light reaches
 float gLightIntensity = 1.0f; // Control the brightness of the light
+float gProjA;
+float gProjB;
 
 Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
@@ -41,30 +40,30 @@ struct VS_IN
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
-	float4 ScreenPos : TEXCOORD;
+	float3 PosVS : POSITION;
 };
 
 VS_OUT VS( VS_IN input )
 {
 	VS_OUT output = (VS_OUT)0;
 
-	float4 worldPos = mul(float4(input.PosL, 1.0f), gWorld);
-	float4 viewPos = mul(worldPos, gView);
-	output.PosH = mul(viewPos, gProjection);
-	output.ScreenPos = output.PosH;
+	output.PosH = mul(float4(input.PosL, 1.0f), gWVP);
+	output.PosVS = mul(float4(input.PosL, 1.0f), gWorldView).xyz;
 
 	return output;
 }
 
 float4 PS( VS_OUT input ) : SV_TARGET
 {
-	// Obtain screen position
-	input.ScreenPos.xy /= input.ScreenPos.w;
+	// Clamp the view ray to the plane at Z = 1
+	float3 viewRay = float3(input.PosVS.xy / input.PosVS.z, 1.0f);
 
-	// Obtain texture coordinates corresponding to the current pixel
-	// The screen coordinates are in [-1,1]x[1,-1]
-	// The texture coordinates need to be in [0,1]x[0,1]
-	float2 texCoord = 0.5f * (float2(input.ScreenPos.x, -input.ScreenPos.y) + 1);
+	float2 texCoord = float2(input.PosH.x / 1280.0f, input.PosH.y / 720.0f);
+	// Sample the depth and convert to linear view space Z (assume it gets
+	// samples as a floating point value in the range [0,1])
+	float depth = gDepthMap.Sample( gDepthSampler, texCoord ).r;
+	float linearDepth = gProjB / (depth - gProjA);
+	float3 posVS = viewRay * linearDepth;
 
 	// Get normal data from gNormalMap
 	float4 normalData = gNormalMap.Sample( gNormalSampler, texCoord );
@@ -77,21 +76,8 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Get specular intensity from gColorMap
 	float specularIntensity = gColorMap.Sample( gColorSampler, texCoord ).a;
 
-	// Read depth
-	float depthVal = gDepthMap.Sample( gDepthSampler, texCoord ).r;
-
-	// Compute screen-space position
-	float4 position;
-	position.xy = input.ScreenPos.xy;
-	position.z = depthVal;
-	position.w = 1.0f;
-
-	// Transform to world space
-	position = mul(position, gInvViewProj);
-	position /= position.w;
-
 	// Surface-to-light vector
-	float3 lightVector = gLightPosition - position.xyz;
+	float3 lightVector = gLightPositionVS - posVS;
 
 	// Compute attenuation based on distance - linear attenuation
 	float attenuation = saturate(1.0f - length(lightVector)/gLightRadius);
@@ -106,8 +92,8 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Reflection vector
 	float3 reflectionVector = normalize(reflect(-lightVector, normal));
 
-	// Camera-to-surface vector
-	float3 directionToCamera = normalize(gCameraPosition - position.xyz);
+	// Camera-to-surface vector (in VS camera position is zero)
+	float3 directionToCamera = normalize(-posVS.xyz);
 
 	// Compute specular light
 	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,

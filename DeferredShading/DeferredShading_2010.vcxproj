@@ -378,9 +378,13 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="GBuffer.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="SSAO.cpp" />
+    <ClInclude Include="GBuffer.h" />
+    <ClInclude Include="SSAO.h" />
     <None Include="DXUT\Optional\directx.ico" />
     <ClInclude Include="App.h" />
     <ClInclude Include="Camera.h" />
@@ -412,7 +416,7 @@
     <None Include="Shaders\ClearGBuffer.fx" />
     <None Include="Shaders\CombineLight.fx" />
     <None Include="Shaders\DirectionalLight.fx" />
-    <None Include="Shaders\FullScreenQuadTest.fx" />
+    <None Include="Shaders\FullscreenTexture.fx" />
     <None Include="Shaders\GBuffer.fx" />
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />

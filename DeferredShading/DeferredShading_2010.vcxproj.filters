@@ -26,6 +26,12 @@
     <Filter Include="Application\OBJLoader">
       <UniqueIdentifier>{fe05aef4-6597-4c4d-ac0d-a273ec80b8b7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Application\SSAO">
+      <UniqueIdentifier>{405d56c4-e850-49b2-b75a-9ad9f80fdd68}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\GBuffer">
+      <UniqueIdentifier>{a4c2201b-f15b-4b89-814b-24822c4b6541}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="DXUT\Optional\directx.ico">
@@ -91,9 +97,6 @@
     <ClCompile Include="DXUT\Optional\SDKmisc.cpp">
       <Filter>DXUT</Filter>
     </ClCompile>
-    <None Include="Shaders\FullScreenQuadTest.fx">
-      <Filter>Shaders</Filter>
-    </None>
     <None Include="Shaders\GBuffer.fx">
       <Filter>Shaders</Filter>
     </None>
@@ -121,6 +124,9 @@
     <None Include="Shaders\OldFilm.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\FullscreenTexture.fx">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">
@@ -138,6 +144,12 @@
     <ClCompile Include="Main.cpp">
       <Filter>Application</Filter>
     </ClCompile>
+    <ClCompile Include="SSAO.cpp">
+      <Filter>Application\SSAO</Filter>
+    </ClCompile>
+    <ClCompile Include="GBuffer.cpp">
+      <Filter>Application\GBuffer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h">
@@ -151,6 +163,12 @@
     </ClInclude>
     <ClInclude Include="OBJLoader.h">
       <Filter>Application\OBJLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="SSAO.h">
+      <Filter>Application\SSAO</Filter>
+    </ClInclude>
+    <ClInclude Include="GBuffer.h">
+      <Filter>Application\GBuffer</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -1,14 +1,7 @@
-// För att lagra linjärt djup (om det är av intresse) kan man lagra en variabel
-// gLinearDepth som innehåller (Far - Near) clip värdet. Därefter är djupet
-// linearDepth = length(position) / gLinearDepth.
-// Beroende på om positionen är world eller view space får man troligen linjärt
-// world space depth eller view space depth. Denna beräkning kan troligen göras
-// för vertexpunkterna och sedan interpoleras till fragmenten.
-
 cbuffer cbPerObject
 {
 	float4x4 gWVP;
-	float4x4 gWorldInvTranspose;
+	float4x4 gWorldViewInvTrp;
 };
 
 float gSpecularIntensity = 0.8f;
@@ -33,9 +26,8 @@ struct VS_IN
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
-	float2 TexC : TEXCOORD0;
-	float3 NormW : NORMAL;
-	//float2 Depth : TEXCOORD1;
+	float2 TexC : TEXCOORD;
+	float3 NormVS : NORMAL;
 };
 
 VS_OUT VS( VS_IN input )
@@ -44,9 +36,7 @@ VS_OUT VS( VS_IN input )
 
 	output.PosH = mul(float4(input.PosL, 1.0f), gWVP);
 	output.TexC = input.TexC;
-	output.NormW = mul(float4(input.NormL, 0.0f), gWorldInvTranspose).xyz;
-	//output.Depth.x = output.PosH.z;
-	//output.Depth.y = output.PosH.w;
+	output.NormVS = mul(float4(input.NormL, 0.0f), gWorldViewInvTrp).xyz;
 
 	return output;
 }
@@ -55,22 +45,19 @@ struct PS_OUT
 {
 	float4 Color : SV_TARGET0;
 	float4 Normal : SV_TARGET1;
-	//float4 Depth : SV_TARGET2;
 };
 
 PS_OUT PS( VS_OUT input )
 {
 	PS_OUT output = (PS_OUT)0;
 
-	float4 diffuse = gDiffuseMap.Sample( gTriLinearSam, input.TexC);
+	float4 diffuse = gDiffuseMap.Sample( gTriLinearSam, input.TexC );
 	output.Color = diffuse;
 	output.Color.a = gSpecularIntensity;
 
 	// Transform normal from [-1,1] to [0,1] because RT store in [0,1] domain.
-	output.Normal.rgb = 0.5f * (normalize(input.NormW) + 1.0f);
+	output.Normal.rgb = 0.5f * (normalize(input.NormVS) + 1.0f);
 	output.Normal.a = gSpecularPower;
-
-	//output.Depth = input.Depth.x / input.Depth.y;
 
 	return output;
 }

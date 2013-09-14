@@ -30,24 +30,21 @@ SamplerState gImageToBlurSampler
 	AddressV = CLAMP;
 };
 
-struct VS_IN
-{
-	float3 PosH : POSITION;
-	float2 TexC : TEXCOORD;
-};
-
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
 	float2 TexC : TEXCOORD;
 };
 
-VS_OUT VS( VS_IN input )
+VS_OUT VS( uint VertexID : SV_VertexID )
 {
 	VS_OUT output = (VS_OUT)0;
 
-	output.PosH = float4(input.PosH, 1.0f);
-	output.TexC = input.TexC;
+	output.PosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	output.PosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	output.PosH.zw = 1.0f;
+
+	output.TexC = output.PosH.xy * float2(0.5f, -0.5f) + 0.5f;
 
 	return output;
 }
@@ -67,15 +64,10 @@ float4 PS( VS_OUT input, uniform bool gHorizontalBlur ) : SV_TARGET
 	float4 color = gWeights[5] * gImageToBlur.SampleLevel( gImageToBlurSampler, input.TexC, 0.0f );
 	float totalWeight = gWeights[5];
 
-	// TODO: Att trycka in normal och djup i samma render target kan spara in
-	// duktigt med prestanda eftersom man bara behöver hälften så många texfetches.
-	// Lagrar man då linjärt djup skulle man i ClearGBuffer sätta ett värde på
-	// 1 (om normaliserat) till djupet, vilket då skulle undvika randommönster av
-	// SSAO på områden utan geometri, eftersom djupet då är mycket högre geometrins.
-	// Allt som använder hårdkodade värden i samband med djup måste ses över.
 	float3 centerNormal = gNormalMap.SampleLevel( gNormalSampler, input.TexC, 0.0f ).xyz * 2.0f - 1.0f;
 	float centerDepth = gDepthMap.SampleLevel( gDepthSampler, input.TexC, 0.0f ).r;
 
+	// Loop through pixels in one end of the line to the other.
 	for (float i = -gBlurRadius; i <= gBlurRadius; ++i)
 	{
 		// We already added in the center weight.

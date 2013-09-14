@@ -11,10 +11,13 @@ SamplerState gPointSam
 	AddressV = CLAMP;
 };
 
-void VS(float3 posH : POSITION, float2 texC : TEXCOORD, out float4 oPosH : SV_POSITION, out float2 oTexC : TEXCOORD)
+void VS( uint VertexID : SV_VertexID, out float4 oPosH : SV_POSITION, out float2 oTexC : TEXCOORD )
 {
-	oPosH = float4(posH, 1.0f);
-	oTexC = texC;
+	oPosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	oPosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	oPosH.zw = 1.0f;
+
+	oTexC = oPosH.xy * float2(0.5f, -0.5f) + 0.5f;
 }
 
 float3 PS(float4 posH : SV_POSITION, float2 texC : TEXCOORD, uniform bool singleChannel) : SV_TARGET

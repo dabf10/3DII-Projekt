@@ -7,6 +7,8 @@
 #include "DXUTsettingsdlg.h"
 #include "Model.h"
 #include "Camera.h"
+#include "SSAO.h"
+#include "GBuffer.h"
 #include <Windows.h>
 #include <xnamath.h>
 #include "d3dx11effect.h"
@@ -96,10 +98,6 @@ private:
 		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
 		float angle, float decayExponent );
 
-	void Blur( ID3D11ShaderResourceView *inputSRV,
-		ID3D11RenderTargetView *outputRTV, bool horizontalBlur,
-		ID3D11DeviceContext *d3dImmediateContext );
-
 private:
 	Model *mModel;
 	XMFLOAT4X4 mBthWorld[2];
@@ -118,13 +116,13 @@ private:
 	std::vector<UINT> mConeMaterialToUseForGroup;
 	std::vector<OBJLoader::SurfaceMaterial> mConeMaterials;
 
-	Camera mCamera;
-
-	POINT mLastMousePos;
-
 	ID3D11Buffer *mFloorVB;
 	ID3D11ShaderResourceView *mFloorTex;
 	XMFLOAT4X4 mFloorWorld;
+
+	Camera mCamera;
+
+	POINT mLastMousePos;
 
 	ID3D11InputLayout *mInputLayout;
 
@@ -134,32 +132,19 @@ private:
 	
 	CDXUTTextHelper *mTxtHelper;
 
-	ID3D11Buffer *mQuadVB;
-	ID3D11InputLayout *mPosTexInputLayout;
-	ID3DX11Effect *mQuadFX;
-	ID3DX11EffectTechnique *mQuadTech;
-	
-	ID3D11RenderTargetView *mColorRT;
-	ID3D11ShaderResourceView *mColorSRV;
-	ID3D11RenderTargetView *mNormalRT;
-	ID3D11ShaderResourceView *mNormalSRV;
+	// Accumulates lights
 	ID3D11RenderTargetView *mLightRT;
 	ID3D11ShaderResourceView *mLightSRV;
+	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11ShaderResourceView *mMainDepthSRV;
-	ID3D11RenderTargetView *mAOMapRT;
-	ID3D11ShaderResourceView *mAOMapSRV;
-	ID3D11RenderTargetView *mAOIntermediateBlurRT;
-	ID3D11ShaderResourceView *mAOIntermediateBlurSRV;
+	// Final image
 	ID3D11RenderTargetView *mCompositeRT;
 	ID3D11ShaderResourceView *mCompositeSRV;
 
-	ID3D11ShaderResourceView *mRandomNormalsSRV;
+	ID3DX11Effect *mFullscreenTextureFX;
 
 	ID3DX11Effect *mFillGBufferFX;
-	ID3DX11EffectTechnique *mFillGBufferTech;
-	ID3DX11Effect *mClearGBufferFX;
-	ID3DX11EffectTechnique *mClearGBufferTech;
 
 	ID3DX11Effect *mDirectionalLightFX;
 	ID3DX11EffectTechnique *mDirectionalLightTech;
@@ -169,12 +154,7 @@ private:
 	ID3DX11EffectTechnique *mSpotlightTech;
 
 	ID3DX11Effect *mCombineLightFX;
-	ID3DX11EffectTechnique *mCombineLightTech;
-	ID3DX11Effect *mAOMapFX;
-	ID3DX11EffectTechnique *mAOMapTech;
-	ID3DX11Effect *mBilateralBlurFX;
 	ID3DX11Effect *mOldFilmFX;
-	ID3DX11EffectTechnique *mOldFilmTech;
 
 	ID3D11DepthStencilState *mNoDepthWrite;
 	ID3D11BlendState *mAdditiveBlend;
@@ -184,7 +164,9 @@ private:
 
 	const DXGI_SURFACE_DESC *mBackBufferSurfaceDesc;
 
-	D3D11_VIEWPORT mQuarterSizeViewport;
+	SSAO *mSSAO;
+
+	GBuffer *mGBuffer;
 };
 
 #endif // _APP_H_

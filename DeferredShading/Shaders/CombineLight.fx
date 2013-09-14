@@ -21,24 +21,21 @@ SamplerState gLightSampler
 	AddressV = CLAMP;
 };
 
-struct VS_IN
-{
-	float3 PosH : POSITION;
-	float2 TexC : TEXCOORD;
-};
-
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
 	float2 TexC : TEXCOORD;
 };
 
-VS_OUT VS( VS_IN input )
+VS_OUT VS( uint VertexID : SV_VertexID )
 {
 	VS_OUT output = (VS_OUT)0;
 
-	output.PosH = float4(input.PosH, 1.0f);
-	output.TexC = input.TexC;
+	output.PosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	output.PosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	output.PosH.zw = 1.0f;
+
+	output.TexC = output.PosH.xy * float2(0.5f, -0.5f) + 0.5f;
 
 	return output;
 }

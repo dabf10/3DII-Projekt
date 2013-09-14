@@ -3,15 +3,11 @@
 // the specular light (which will always be considered white), to the alpha channel.
 // ############################################################################
 
-float3 gLightDirection;
+float3 gLightDirectionVS;
 float3 gLightColor;
-
-// Position of the camera, used for specular light calculation
-float3 gCameraPosition;
-
-// In order to compute the world position of a pixel when knowing the screen
-// depth, the inverse of the ViewProjection matrix is needed.
-float4x4 gInvViewProj;
+float gProjA;
+float gProjB;
+float4x4 gInvProj;
 
 // G-Buffer textures
 Texture2D gColorMap; // Diffuse + specular intensity in alpha
@@ -39,25 +35,28 @@ SamplerState gNormalSampler
 	AddressV = CLAMP;
 };
 
-struct VS_IN
-{
-	float3 PosH : POSITION;
-	float2 TexC : TEXCOORD;
-};
-
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
 	float2 TexC : TEXCOORD;
+	float3 ViewRay : POSITION;
 };
 
-VS_OUT VS( VS_IN input )
+VS_OUT VS( uint VertexID : SV_VertexID )
 {
-	// Pass on through, position already in NDC space.
 	VS_OUT output = (VS_OUT)0;
 
-	output.PosH = float4(input.PosH, 1.0f);
-	output.TexC = input.TexC;
+	output.PosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	output.PosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	output.PosH.zw = 1.0f;
+
+	output.TexC = output.PosH.xy * float2(0.5f, -0.5f) + 0.5f;
+
+	float3 posVS = mul(output.PosH, gInvProj).xyz;
+	// Clamp view ray to plane at Z = 1. For a directional light, this can
+	// be done in the vertex shader because we only interpolate in the XY
+	// direction (screen aligned)
+	output.ViewRay = float3(posVS.xy / posVS.z, 1.0f);
 
 	return output;
 }
@@ -77,24 +76,12 @@ float4 PS( VS_OUT input ) : SV_TARGET
 
 	// For specular lighting, we need to have the vector from the camera to the
 	// point being shaded, alas, we need the position. Right now we have the
-	// depth in gDepthMap, and position on the screen in the [0,1]x[0,1] range,
-	// which comes from the texture coordinates. This will be transformed into
-	// screen coordinates, which are in the [-1,1]x[-1,1] range, and then using
-	// the gInvViewProj matrix, we get back into world coordinates.
+	// depth in gDepthMap, which can be used to construct view space position.
 
 	// Read depth
 	float depth = gDepthMap.Sample( gDepthSampler, input.TexC ).r;
-
-	// Compute screen-space position
-	float4 position;
-	position.x = input.TexC.x * 2.0f - 1.0f;
-	position.y = -(input.TexC.y * 2.0f - 1.0f);
-	position.z = depth;
-	position.w = 1.0f;
-
-	// Transform to world space
-	position = mul(position, gInvViewProj);
-	position /= position.w;
+	float linearDepth = gProjB / (depth - gProjA);
+	float3 posVS = input.ViewRay * linearDepth;
 
 	// After we compute the vector from the surface to the light (which in this
 	// case is the negated gLightDirection), we compute the diffuse light with
@@ -104,7 +91,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// the RGB channels, and the specular light in the A channel.
 
 	// Surface-to-light
-	float3 lightVector = -normalize(gLightDirection);
+	float3 lightVector = -normalize(gLightDirectionVS);
 
 	// Compute diffuse light
 	float NdL = max(0, dot(normal, lightVector));
@@ -114,8 +101,8 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Reflection vector
 	float3 reflectionVector = normalize(reflect(lightVector, normal));
 
-	// Camera-to-surface vector
-	float3 directionToCamera = normalize(gCameraPosition - position.xyz);
+	// Camera-to-surface vector (camera position is origin because of view space :) )
+	float3 directionToCamera = normalize(-posVS.xyz);
 
 	// Compute specular light
 	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,

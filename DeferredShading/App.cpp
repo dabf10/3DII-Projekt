@@ -14,29 +14,14 @@ App::App() :
 	mTxtHelper( 0 ),
 	mFloorVB( 0 ),
 	mFloorTex( 0 ),
-	mQuadVB( 0 ),
-	mPosTexInputLayout( 0 ),
-	mQuadFX( 0 ),
-	mQuadTech( 0 ),
-	mColorRT( 0 ),
-	mColorSRV( 0 ),
-	mNormalRT( 0 ),
-	mNormalSRV( 0 ),
 	mLightRT( 0 ),
 	mLightSRV( 0 ),
 	mMainDepthDSV( 0 ),
 	mMainDepthSRV( 0 ),
-	mAOMapRT( 0 ),
-	mAOMapSRV( 0 ),
-	mAOIntermediateBlurRT( 0 ),
-	mAOIntermediateBlurSRV( 0 ),
 	mCompositeRT( 0 ),
 	mCompositeSRV( 0 ),
-	mRandomNormalsSRV( 0 ),
+	mFullscreenTextureFX( 0 ),
 	mFillGBufferFX( 0 ),
-	mFillGBufferTech( 0 ),
-	mClearGBufferFX( 0 ),
-	mClearGBufferTech( 0 ),
 	mDirectionalLightFX( 0 ),
 	mDirectionalLightTech( 0 ),
 	mPointLightFX( 0 ),
@@ -44,16 +29,14 @@ App::App() :
 	mSpotlightFX( 0 ),
 	mSpotlightTech( 0 ),
 	mCombineLightFX( 0 ),
-	mCombineLightTech( 0 ),
-	mAOMapFX( 0 ),
-	mAOMapTech( 0 ),
-	mBilateralBlurFX( 0 ),
 	mOldFilmFX( 0 ),
 	mNoDepthWrite( 0 ),
 	mAdditiveBlend( 0 ),
 	mCullBack( 0 ),
 	mCullFront( 0 ),
-	mCullNone( 0 )
+	mCullNone( 0 ),
+	mSSAO( 0 ),
+	mGBuffer( 0 )
 {
 }
 
@@ -112,8 +95,6 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	if (!mConeModel->LoadOBJ( "cone.obj", true, pd3dDevice, mConeMaterialToUseForGroup, mConeMaterials ) )
 		return E_FAIL;
 
-	V_RETURN( D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "noise.png", 0, 0, &mRandomNormalsSRV, 0) );
-
 	if (!BuildFX(pd3dDevice)) return E_FAIL;
 	if (!BuildVertexLayout(pd3dDevice)) return E_FAIL;
 
@@ -143,48 +124,21 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	D3D11_SUBRESOURCE_DATA vinit;
 	vinit.pSysMem = verts;
 	V_RETURN( pd3dDevice->CreateBuffer( &vbDesc, &vinit, &mFloorVB ) );
-
+	// Load floor texture
 	V_RETURN( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "floor.jpg", 0, 0, &mFloorTex, 0 ) );
 
-	//
-	// Full screen quad
-	//
-
-	vbDesc.ByteWidth = 6 * 20;
-	vbDesc.StructureByteStride = 20;
-
-	struct PosTex
-	{
-		XMFLOAT3 Pos;
-		XMFLOAT2 Tex;
-	};
-
-	PosTex quadVerts[6] =
-	{
-		{ XMFLOAT3(-1, 1, 0), XMFLOAT2(0, 0) },
-		{ XMFLOAT3(1, 1, 0), XMFLOAT2(1, 0) },
-		{ XMFLOAT3(-1, -1, 0), XMFLOAT2(0, 1) },
-
-		{ XMFLOAT3(-1, -1, 0), XMFLOAT2(0, 1) },
-		{ XMFLOAT3(1, 1, 0), XMFLOAT2(1, 0) },
-		{ XMFLOAT3(1, -1, 0), XMFLOAT2(1, 1) },
-	};
-
-	vinit.pSysMem = quadVerts;
-	V_RETURN( pd3dDevice->CreateBuffer( &vbDesc, &vinit, &mQuadVB ) );
-
+	// Create a no depth write D/S state
 	D3D11_DEPTH_STENCIL_DESC dsDesc = D3D11_DEPTH_STENCIL_DESC( );
 	dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
 	dsDesc.DepthEnable = true;
 	dsDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
 	V_RETURN( pd3dDevice->CreateDepthStencilState( &dsDesc, &mNoDepthWrite ) );
 
+	// Additive blend state
 	D3D11_BLEND_DESC blendDesc;
 	ZeroMemory( &blendDesc, sizeof(blendDesc) );
-
 	D3D11_RENDER_TARGET_BLEND_DESC rtbd;
 	ZeroMemory( &rtbd, sizeof(rtbd) );
-
 	rtbd.BlendEnable = true;
 	rtbd.SrcBlend = D3D11_BLEND_ONE;
 	rtbd.DestBlend = D3D11_BLEND_ONE;
@@ -193,12 +147,11 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	rtbd.DestBlendAlpha = D3D11_BLEND_ONE;
 	rtbd.BlendOpAlpha = D3D11_BLEND_OP_ADD;
 	rtbd.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-
 	blendDesc.AlphaToCoverageEnable = false;
 	blendDesc.RenderTarget[0] = rtbd;
-
 	V_RETURN( pd3dDevice->CreateBlendState( &blendDesc, &mAdditiveBlend ) );
 
+	// Cull back, cull front, and cull none RS states
 	D3D11_RASTERIZER_DESC rsDesc = D3D11_RASTERIZER_DESC( );
 	rsDesc.FillMode = D3D11_FILL_SOLID;
 	rsDesc.CullMode = D3D11_CULL_BACK;
@@ -237,28 +190,21 @@ void App::OnD3D11DestroyDevice( )
 	mSphereSRV.clear();
 	mSphereMaterials.clear();
 	mSphereMaterialToUseForGroup.clear();
-
-	SAFE_RELEASE( mRandomNormalsSRV );
 	
 	SAFE_RELEASE( mInputLayout );
 
 	SAFE_RELEASE( mFloorVB );
 	SAFE_RELEASE( mFloorTex );
 
-	SAFE_RELEASE( mQuadFX );
-	SAFE_RELEASE( mPosTexInputLayout );
-	SAFE_RELEASE( mQuadVB );
+	SAFE_RELEASE( mFullscreenTextureFX );
 
 	SAFE_RELEASE( mFillGBufferFX );
-	SAFE_RELEASE( mClearGBufferFX );
 
 	SAFE_RELEASE( mDirectionalLightFX );
 	SAFE_RELEASE( mPointLightFX );
 	SAFE_RELEASE( mSpotlightFX );
 
 	SAFE_RELEASE( mCombineLightFX );
-	SAFE_RELEASE( mAOMapFX );
-	SAFE_RELEASE( mBilateralBlurFX );
 	SAFE_RELEASE( mOldFilmFX );
 
 	SAFE_RELEASE( mNoDepthWrite );
@@ -301,8 +247,8 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
 
 	V_RETURN( CreateGBuffer( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height ) );
 
-	mQuarterSizeViewport.Width = pBackBufferSurfaceDesc->Width / 2;
-	mQuarterSizeViewport.Height = pBackBufferSurfaceDesc->Height / 2;
+	mSSAO = new SSAO( pd3dDevice, pBackBufferSurfaceDesc->Width / 2, pBackBufferSurfaceDesc->Height / 2, 18, 0.1f, 1.5f );
+	mGBuffer = new GBuffer( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height );
 
 	return S_OK;
 }
@@ -314,20 +260,14 @@ void App::OnD3D11ReleasingSwapChain( )
 {
 	mDialogResourceManager.OnD3D11ReleasingSwapChain();
 	
-	SAFE_RELEASE( mColorRT );
-	SAFE_RELEASE( mColorSRV );
-	SAFE_RELEASE( mNormalRT );
-	SAFE_RELEASE( mNormalSRV );
 	SAFE_RELEASE( mLightRT );
 	SAFE_RELEASE( mLightSRV );
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthSRV );
-	SAFE_RELEASE( mAOMapRT );
-	SAFE_RELEASE( mAOMapSRV );
-	SAFE_RELEASE( mAOIntermediateBlurRT );
-	SAFE_RELEASE( mAOIntermediateBlurSRV );
 	SAFE_RELEASE( mCompositeRT );
 	SAFE_RELEASE( mCompositeSRV );
+	SAFE_DELETE( mSSAO );
+	SAFE_DELETE( mGBuffer );
 }
 
 
@@ -364,12 +304,6 @@ bool App::Init( )
 	//
 	// Initialize rest of application.
 	//
-
-	// Width and height are set when window is resized.
-	mQuarterSizeViewport.TopLeftX = 0.0f;
-	mQuarterSizeViewport.TopLeftY = 0.0f;
-	mQuarterSizeViewport.MinDepth = 0.0f;
-	mQuarterSizeViewport.MaxDepth = 1.0f;
 
 	mLastMousePos.x = 0;
 	mLastMousePos.y = 0;
@@ -452,11 +386,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	ID3D11RenderTargetView *rtv = DXUTGetD3D11RenderTargetView();
 	pd3dImmediateContext->ClearRenderTargetView(rtv, clearColor);
 	pd3dImmediateContext->ClearDepthStencilView(mMainDepthDSV, D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-	D3D11_VIEWPORT fullViewport;
-	UINT numViewports = 1;
-	pd3dImmediateContext->RSGetViewports(&numViewports, &fullViewport);
-
+	
 	// If the settings dialog is being shown, then render it instead of rendering
 	// the app's scene.
 	if (mD3DSettingsDlg.IsActive() )
@@ -467,27 +397,13 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	pd3dImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	ID3D11RenderTargetView *rtvs[] = { mColorRT, mNormalRT };
+	ID3D11RenderTargetView *rtvs[] = { mGBuffer->ColorRT(), mGBuffer->NormalRT() };
+	// Clearing the GBuffer does not require any depth test.
 	pd3dImmediateContext->OMSetRenderTargets( 2, rtvs, 0 );
 
-	//
-	// Clear G-Buffer by rendering a full-screen quad using correct shader.
-	//
-	{
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mClearGBufferTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mClearGBufferTech->GetPassByIndex(p)->Apply(0, pd3dImmediateContext);
-			pd3dImmediateContext->Draw(6, 0);
-		}
-	}
+	mGBuffer->Clear( pd3dImmediateContext );
 	
+	// Enable depth testing when rendering scene.
 	pd3dImmediateContext->OMSetRenderTargets( 2, rtvs, mMainDepthDSV );
 
 	//
@@ -502,11 +418,12 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		for (int logo = 0; logo < 2; ++logo)
 		{
 			XMMATRIX world = XMLoadFloat4x4(&mBthWorld[logo]);
+			XMMATRIX worldView = world * mCamera.View();
 			XMMATRIX wvp = world * mCamera.ViewProj();
-			XMMATRIX worldInvTranspose = XMMatrixInverse(&XMMatrixDeterminant(world), XMMatrixTranspose(world));
+			XMMATRIX worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
 			// Set object specific constants.
-			mFillGBufferFX->GetVariableByName("gWorldInvTranspose")->AsMatrix()->SetMatrix((float*)&worldInvTranspose);
+			mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 			mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 
 			// Loop through every submesh the current mesh consists of.
@@ -514,13 +431,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			{
 				mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mMeshSRV[mBthMaterialToUseForGroup[s]]);
 
-				D3DX11_TECHNIQUE_DESC techDesc;
-				mFillGBufferTech->GetDesc(&techDesc);
-				for (UINT p = 0; p < techDesc.Passes; ++p)
-				{
-					mFillGBufferTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-					mModel->RenderSubMesh( pd3dImmediateContext, s );
-				}
+				mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+				mModel->RenderSubMesh( pd3dImmediateContext, s );
 			}
 		}
 
@@ -529,11 +441,12 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		//
 
 		XMMATRIX world = XMLoadFloat4x4( &mFloorWorld );
+		XMMATRIX worldView = world * mCamera.View();
 		XMMATRIX wvp = world * mCamera.ViewProj();
-		XMMATRIX worldInvTranspose = XMMatrixInverse(&XMMatrixDeterminant(world), XMMatrixTranspose(world));
+		XMMATRIX worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
 		// Set per object constants.
-		mFillGBufferFX->GetVariableByName("gWorldInvTranspose")->AsMatrix()->SetMatrix((float*)&worldInvTranspose);
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFloorTex);
 
@@ -541,26 +454,22 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		UINT offsets = 0;
 		pd3dImmediateContext->IASetVertexBuffers( 0, 1, &mFloorVB, &strides, &offsets );
 
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mFillGBufferTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mFillGBufferTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-			pd3dImmediateContext->Draw( 6, 0 );
-		}
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 6, 0 );
 
-		mFillGBufferTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 		//
 		// Sphere model
 		//
 		
 		world = XMLoadFloat4x4(&mSphereWorld);
+		worldView = world * mCamera.View();
 		wvp = world * mCamera.ViewProj();
-		worldInvTranspose = XMMatrixInverse(&XMMatrixDeterminant(world), XMMatrixTranspose(world));
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
 		// Set object specific constants.
-		mFillGBufferFX->GetVariableByName("gWorldInvTranspose")->AsMatrix()->SetMatrix((float*)&worldInvTranspose);
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 
 		// Loop through every submesh the current mesh consists of.
@@ -568,13 +477,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		{
 			mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV[mSphereMaterialToUseForGroup[s]]);
 
-			D3DX11_TECHNIQUE_DESC techDesc;
-			mFillGBufferTech->GetDesc(&techDesc);
-			for (UINT p = 0; p < techDesc.Passes; ++p)
-			{
-				mFillGBufferTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-				mSphereModel->RenderSubMesh( pd3dImmediateContext, s );
-			}
+			mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+			mSphereModel->RenderSubMesh( pd3dImmediateContext, s );
 		}
 
 		//
@@ -582,20 +486,17 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		//
 
 		world = XMLoadFloat4x4(&mConeWorld);
+		worldView = world * mCamera.View();
 		wvp = world * mCamera.ViewProj();
-		worldInvTranspose = XMMatrixInverse(&XMMatrixDeterminant(world), XMMatrixTranspose(world));
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
 		// Set object specific constants.
-		mFillGBufferFX->GetVariableByName("gWorldInvTranspose")->AsMatrix()->SetMatrix((float*)&worldInvTranspose);
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mMeshSRV[0]);
 
-		mFillGBufferTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mFillGBufferTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-			mConeModel->Render( pd3dImmediateContext );
-		}
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mConeModel->Render( pd3dImmediateContext );
 	}
 
 	//
@@ -604,85 +505,37 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	RenderLights( pd3dImmediateContext, fTime );
 
-	pd3dImmediateContext->OMSetRenderTargets(1, &mAOMapRT, 0);
-	pd3dImmediateContext->ClearRenderTargetView(mAOMapRT, clearColor);
-	pd3dImmediateContext->RSSetViewports(1, &mQuarterSizeViewport);
-
 	//
 	// SSAO
 	//
-	{
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-		
-		float offset = 18.0f;
-		float aoStart = 0.1f;
-		float hemisphereRadius = 1.5f;
 
-		XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
+	// Because SSAO changes viewport (normally only renders to a quarter size of backbuffer)
+	// we need to reset the viewport after.
+	D3D11_VIEWPORT fullViewport;
+	UINT numViewports = 1;
+	pd3dImmediateContext->RSGetViewports(&numViewports, &fullViewport);
 
-		mAOMapFX->GetVariableByName("gRandomNormals")->AsShaderResource()->SetResource(mRandomNormalsSRV);
-		mAOMapFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
-		mAOMapFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-		mAOMapFX->GetVariableByName("gOffset")->AsScalar()->SetFloat(offset);
-		mAOMapFX->GetVariableByName("gAOStart")->AsScalar()->SetFloat(aoStart);
-		mAOMapFX->GetVariableByName("gHemisphereRadius")->AsScalar()->SetFloat(hemisphereRadius);
-		mAOMapFX->GetVariableByName("gInvViewProjection")->AsMatrix()->SetMatrix((float*)&invViewProj);
-		mAOMapFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
-		mAOMapFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
-
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mAOMapTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mAOMapTech->GetPassByIndex(p)->Apply(0, pd3dImmediateContext);
-			pd3dImmediateContext->Draw(6, 0);
-		}
-		
-		mAOMapFX->GetVariableByName("gRandomNormals")->AsShaderResource()->SetResource( 0 );
-		mAOMapFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-		mAOMapFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-		mAOMapTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-		// Blur AO map n times.
-		for (int i = 0; i < 1; ++i)
-		{
-			Blur( mAOMapSRV, mAOIntermediateBlurRT, true, pd3dImmediateContext );
-			Blur( mAOIntermediateBlurSRV, mAOMapRT, false, pd3dImmediateContext );
-		}
-	}
+	mSSAO->CalculateSSAO(
+		mMainDepthSRV, mGBuffer->NormalSRV(), mCamera.Proj(), pd3dImmediateContext );
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
-	//pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
-	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+	pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
 
 	//
 	// Render a full-screen quad that combines the light from the light map
 	// with the color map from the G-Buffer
 	//
-	{
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
+	{		
+		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
 
-		D3DX11_TECHNIQUE_DESC techDesc;
-		mCombineLightTech->GetDesc(&techDesc);
-		for (UINT p = 0; p < techDesc.Passes; ++p)
-		{
-			mCombineLightTech->GetPassByIndex(p)->Apply(0, pd3dImmediateContext);
-			pd3dImmediateContext->Draw(6, 0);
-		}
+		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 3, 0 );
 
 		// Unbind shader resources
 		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	}
 
 	// Render to back buffer.
@@ -692,11 +545,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// Generate an old-film looking effect
 	//
 	//{
-	//	UINT strides = 20;
-	//	UINT offsets = 0;
-	//	pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-	//	pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
 	//	float sepia = 0.6f;
 	//	float noise = 0.06f;
 	//	float scratch = 0.3f;
@@ -714,18 +562,24 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//	mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
 	//	mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
 
-	//	D3DX11_TECHNIQUE_DESC techDesc;
-	//	mOldFilmTech->GetDesc(&techDesc);
-	//	for (UINT p = 0; p < techDesc.Passes; ++p)
-	//	{
-	//		mOldFilmTech->GetPassByIndex(p)->Apply( 0, pd3dImmediateContext );
-	//		pd3dImmediateContext->Draw(6, 0);
-	//	}
+	//	mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//	pd3dImmediateContext->Draw( 3, 0 );
 
 	//	// Unbind shader resources
 	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
-	//	mOldFilmTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//	mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	//}
+
+	// Render a full screen triangle to place content of CompositeSRV on the back buffer.
+	{
+		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
+
+		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 3, 0 );
+
+		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
+		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	}
 
 	//
 	// Full-screen textured quad
@@ -745,10 +599,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// 4 smaller in quadrants. Simply select what resource views to use
 		// and how many of those to draw.
 		ID3D11ShaderResourceView *srvs[4] = {
-			mAOMapSRV,
-			mNormalSRV,
+			mSSAO->AOMap(),
+			mGBuffer->NormalSRV(),
 			mLightSRV,
-			mColorSRV
+			mGBuffer->ColorSRV()
 		};
 
 		D3D11_VIEWPORT vp[4];
@@ -770,31 +624,26 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 		// Here begins actual render code
 
-		UINT strides = 20;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-		pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
 		for (int i = 0; i < numImages; ++i)
 		{
 			ID3DX11EffectTechnique *tech = 0;
-			if (srvs[i] == mAOMapSRV || srvs[i] == mMainDepthSRV)
-				tech = mQuadFX->GetTechniqueByName("SingleChannel");
+			if (srvs[i] == mSSAO->AOMap() || srvs[i] == mMainDepthSRV)
+				tech = mFullscreenTextureFX->GetTechniqueByName("SingleChannel");
 			else
-				tech = mQuadFX->GetTechniqueByName("MultiChannel");
+				tech = mFullscreenTextureFX->GetTechniqueByName("MultiChannel");
 			
 			D3DX11_TECHNIQUE_DESC techDesc;
 			tech->GetDesc(&techDesc);
 
 			pd3dImmediateContext->RSSetViewports(1, &vp[i]);
-			mQuadFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(srvs[i]);
+			mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(srvs[i]);
 
-			tech->GetPassByIndex(0)->Apply(0, pd3dImmediateContext);
-			pd3dImmediateContext->Draw(6, 0);
+			tech->GetPassByIndex(0)->Apply( 0, pd3dImmediateContext );
+			pd3dImmediateContext->Draw( 3, 0 );
+
+			mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
+			tech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		}
-
-		mQuadFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
-		mQuadTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 		pd3dImmediateContext->RSSetViewports(1, &fullViewport);
 	}
@@ -805,43 +654,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	mHUD.OnRender( fElapsedTime );
 	RenderText();
-}
-
-void App::Blur( ID3D11ShaderResourceView *inputSRV,
-	ID3D11RenderTargetView *outputRTV, bool horizontalBlur,
-	ID3D11DeviceContext *d3dImmediateContext )
-{
-	ID3D11RenderTargetView *rtv[1] = { outputRTV };
-	d3dImmediateContext->OMSetRenderTargets( 1, rtv, 0 );
-
-	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	d3dImmediateContext->ClearRenderTargetView( outputRTV, clearColor );
-
-	mBilateralBlurFX->GetVariableByName("gTexelWidth")->AsScalar()->SetFloat(1.0f / (mBackBufferSurfaceDesc->Width / 2));
-	mBilateralBlurFX->GetVariableByName("gTexelHeight")->AsScalar()->SetFloat(1.0f / (mBackBufferSurfaceDesc->Height / 2));
-	mBilateralBlurFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( mNormalSRV );
-	mBilateralBlurFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
-	mBilateralBlurFX->GetVariableByName("gImageToBlur")->AsShaderResource()->SetResource( inputSRV );
-
-	ID3DX11EffectTechnique *tech;
-	if (horizontalBlur)
-		tech = mBilateralBlurFX->GetTechniqueByName("HorizontalBlur");
-	else
-		tech = mBilateralBlurFX->GetTechniqueByName("VerticalBlur");
-
-	// Input layout and vertex buffer already set.
-	D3DX11_TECHNIQUE_DESC techDesc;
-	tech->GetDesc( &techDesc );
-	for (UINT p = 0; p < techDesc.Passes; ++p)
-	{
-		tech->GetPassByIndex(p)->Apply( 0, d3dImmediateContext );
-		d3dImmediateContext->Draw( 6, 0 );
-	}
-	
-	mBilateralBlurFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-	mBilateralBlurFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-	mBilateralBlurFX->GetVariableByName("gImageToBlur")->AsShaderResource()->SetResource( 0 );
-	tech->GetPassByIndex( 0 )->Apply( 0, d3dImmediateContext );
 }
 
 
@@ -919,10 +731,8 @@ bool App::BuildFX(ID3D11Device *device)
 	// Full-screen quad
 	//
 
-	if (!CompileShader( device, "Shaders/FullScreenQuadTest.fx", &mQuadFX ))
+	if (!CompileShader( device, "Shaders/FullscreenTexture.fx", &mFullscreenTextureFX ))
 		return false;
-
-	mQuadTech = mQuadFX->GetTechniqueByIndex( 0 );
 
 	//
 	// GBuffer
@@ -930,17 +740,6 @@ bool App::BuildFX(ID3D11Device *device)
 
 	if (!CompileShader( device, "Shaders/GBuffer.fx", &mFillGBufferFX ))
 		return false;
-
-	mFillGBufferTech = mFillGBufferFX->GetTechniqueByIndex(0);
-
-	//
-	// ClearGBuffer
-	//
-
-	if (!CompileShader( device, "Shaders/ClearGBuffer.fx", &mClearGBufferFX ))
-		return false;
-
-	mClearGBufferTech = mClearGBufferFX->GetTechniqueByIndex(0);
 
 	//
 	// DirectionalLight
@@ -957,8 +756,6 @@ bool App::BuildFX(ID3D11Device *device)
 
 	if (!CompileShader( device, "Shaders/CombineLight.fx", &mCombineLightFX ))
 		return false;
-
-	mCombineLightTech = mCombineLightFX->GetTechniqueByIndex(0);
 
 	//
 	// PointLight
@@ -979,29 +776,11 @@ bool App::BuildFX(ID3D11Device *device)
 	mSpotlightTech = mSpotlightFX->GetTechniqueByIndex(0);
 
 	//
-	// SSAO
-	//
-
-	if (!CompileShader( device, "Shaders/SSAO.fx", &mAOMapFX ))
-		return false;
-
-	mAOMapTech = mAOMapFX->GetTechniqueByIndex(0);
-
-	//
-	// BilateralBlur
-	//
-
-	if (!CompileShader( device, "Shaders/BilateralBlur.fx", &mBilateralBlurFX ))
-		return false;
-
-	//
 	// OldFilm
 	//
 
 	if (!CompileShader( device, "Shaders/OldFilm.fx", &mOldFilmFX ))
 		return false;
-
-	mOldFilmTech = mOldFilmFX->GetTechniqueByIndex( 0 );
 
 	return true;
 }
@@ -1056,23 +835,9 @@ bool App::BuildVertexLayout(ID3D11Device *device)
 
 	// Create the input layout.
 	D3DX11_PASS_DESC passDesc;
-	mFillGBufferTech->GetPassByIndex(0)->GetDesc(&passDesc);
+	mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->GetDesc( &passDesc );
 	if (FAILED(device->CreateInputLayout(vertexDesc, 3, passDesc.pIAInputSignature,
 		passDesc.IAInputSignatureSize, &mInputLayout))) return false;
-
-	//
-	// PosTex
-	//
-
-	D3D11_INPUT_ELEMENT_DESC posTexDesc[] =
-	{
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	};
-
-	mQuadTech->GetPassByIndex( 0 )->GetDesc( &passDesc );
-	if (FAILED(device->CreateInputLayout(posTexDesc, 2, passDesc.pIAInputSignature,
-		passDesc.IAInputSignatureSize, &mPosTexInputLayout))) return false;
 
 	return true;
 }
@@ -1115,30 +880,6 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 
 	//
-	// Color
-	//
-
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mColorRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mColorSRV ) );
-	
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
-	//
-	// Normal
-	//
-
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mNormalRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mNormalSRV ) );
-	
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
-	//
 	// Light (not actually G-Buffer, but used to accumulate light)
 	//
 
@@ -1163,31 +904,6 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mCompositeRT ) );
 	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mCompositeSRV ) );
 
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
-	//
-	// Ambient Occlusion
-	//
-	
-	texDesc.Width = mBackBufferSurfaceDesc->Width / 2;
-	texDesc.Height = mBackBufferSurfaceDesc->Height / 2;
-	texDesc.Format = DXGI_FORMAT_R8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mAOMapRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mAOMapSRV ) );
-	
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
-	//
-	// Ambient Occlusion Intermediate Blur
-	//
-
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mAOIntermediateBlurRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mAOIntermediateBlurSRV ) );
-	
 	// Views saves reference
 	SAFE_RELEASE( tex );
 
@@ -1225,10 +941,10 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction )
 {
 	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
-	mDirectionalLightFX->GetVariableByName("gLightDirection")->AsVector()->SetFloatVector((float*)&direction);
+	mDirectionalLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(XMLoadFloat3(&direction), mCamera.View()));
 
 	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	pd3dImmediateContext->Draw( 6, 0 );
+	pd3dImmediateContext->Draw( 3, 0 );
 }
 
 // TODO: Would be nice to use depth buffer to depth-test light volumes. But
@@ -1241,10 +957,11 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 	// and translate it to light position.
 	XMMATRIX sphereWorld = XMMatrixScaling(radius, radius, radius) *
 		XMMatrixTranslation(position.x, position.y, position.z);
-
-	mPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
-	mPointLightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&position);
+	
+	mPointLightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(sphereWorld, mCamera.View()));
+	mPointLightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(sphereWorld, mCamera.ViewProj()));
 	mPointLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mPointLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 		
@@ -1280,9 +997,10 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
 		XMMatrixTranslation(position.x, position.y, position.z);
 
-	mSpotlightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&coneWorld);
-	mSpotlightFX->GetVariableByName("gLightPosition")->AsVector()->SetFloatVector((float*)&position);
-	mSpotlightFX->GetVariableByName("gDirection")->AsVector()->SetFloatVector((float*)&directionXM);
+	mSpotlightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.View()));
+	mSpotlightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.ViewProj()));
+	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
 	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mSpotlightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mSpotlightFX->GetVariableByName("gAngleCosine")->AsScalar()->SetFloat(cosf(angleRad));
@@ -1330,23 +1048,25 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
 	
 	// Common for every light
-	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
+	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
+	// projA and projB are projection constants based on camera near and far
+	// clip planes, used to reconstruct view space position from depth in shaders.
+	// projA = zf / (zf - zn)
+	// projB = -zn * zf / (zf - zn)
+	float projA = mCamera.Proj()._33;
+	float projB = mCamera.Proj()._43;
 
 	//
 	// Directional light stuff
 	//
 
-	UINT strides = 20;
-	UINT offsets = 0;
-	pd3dImmediateContext->IASetVertexBuffers(0, 1, &mQuadVB, &strides, &offsets);
-	pd3dImmediateContext->IASetInputLayout(mPosTexInputLayout);
-
 	// Set shader variables common for every directional light
-	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mDirectionalLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-	mDirectionalLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
+	mDirectionalLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
+	mDirectionalLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
+	mDirectionalLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
 	// Render directional lights
 	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(0.4f, 0.4f, 0.4f), XMFLOAT3(0, -1, 1) );
@@ -1360,15 +1080,13 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 	// Render point lights
 	//
-	
+
 	// Set shader variables common for every point light
-	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mPointLightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-	mPointLightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
-	mPointLightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
-	mPointLightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+	mPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
+	mPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
 	XMFLOAT3 colors[10];
 	colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
@@ -1399,7 +1117,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 		position = XMFLOAT3(cosf(i * XM_2PI / 10 + fTime), -0.6f, sinf(i * XM_2PI / 10 + fTime));
 		pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
 
-		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusSecondSet, lightIntensitySecondSet );
+		//RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusSecondSet, lightIntensitySecondSet );
 	}
 
 	// Unbind the G-Buffer textures
@@ -1424,13 +1142,11 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	direction.z = cosf(static_cast<float>( fTime ));
 	
 	// Set shader variables common for every spotlight
-	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mColorSRV);
-	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mNormalSRV);
+	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mSpotlightFX->GetVariableByName("gView")->AsMatrix()->SetMatrix((float*)&mCamera.View());
-	mSpotlightFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
-	mSpotlightFX->GetVariableByName("gCameraPosition")->AsVector()->SetFloatVector((float*)&mCamera.GetPosition());
-	mSpotlightFX->GetVariableByName("gInvViewProj")->AsMatrix()->SetMatrix((float*)&invViewProj);
+	mSpotlightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
+	mSpotlightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
 	RenderSpotlight( pd3dImmediateContext, color, position, direction, radius,
 		intensity, angleDeg, decayExponent );

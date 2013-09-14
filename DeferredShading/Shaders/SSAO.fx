@@ -24,10 +24,11 @@ SamplerState gRandomNormalSampler
 };
 
 float4x4 gProjection;
+float4x4 gInvProj;
+float gProjA;
+float gProjB;
 float gAOStart;
 float gHemisphereRadius;
-float4x4 gView; // to remove
-float4x4 gInvViewProjection; // TODO: Remove me, this is to test in world space. Replace with gInvProjection
 float gOffset; // Used to alter texture coordinates when sampling random normals.
 float gSamples = 16;
 static const float gInvSamples = 1.0f / 16;
@@ -50,68 +51,42 @@ static const float3 gRandomSphereVectors[] = { // Random vectors inside unit sph
 	float3( -0.47761092,  0.28479110, -0.02717160 )
 };
 
-struct VS_IN
-{
-	float3 PosH : POSITION;
-	float2 TexC : TEXCOORD;
-};
-
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
 	float2 TexC : TEXCOORD;
+	float3 ViewRay : POSITION;
 };
 
-// TODO: Om jag ändrar till linjärt djup kanske man kan interpolera
-// riktning till frustumhörn här.
-VS_OUT VS( VS_IN input )
+VS_OUT VS( uint VertexID : SV_VertexID )
 {
 	VS_OUT output = (VS_OUT)0;
 
-	output.PosH = float4(input.PosH, 1.0f);
-	output.TexC = input.TexC;
+	output.PosH.x = (VertexID == 2) ? 3.0f : -1.0f;
+	output.PosH.y = (VertexID == 0) ? -3.0f : 1.0f;
+	output.PosH.zw = 1.0f;
+
+	output.TexC = output.PosH.xy * float2(0.5f, -0.5f) + 0.5f;
+
+	float3 posVS = mul(output.PosH, gInvProj).xyz;
+	output.ViewRay = float3(posVS.xy / posVS.z, 1.0f);
 
 	return output;
 }
 
-float3 CalculatePosition( float2 texC, float depth )
-{
-	float x = texC.x * 2.0f - 1.0f;
-	float y = -(texC.y * 2.0f - 1.0f);
-	float4 projPos = float4(x, y, depth, 1.0f);
-	// Transform projected position to view-space position using inverse projection matrix.
-	//float4 posV = mul(projPos, gInvProjection);
-	float4 posV = mul(projPos, gInvViewProjection); // TODO: Remove this. Not really view pos, but transforms to world for testing purposes
-	// Divide by w to get the view-space position.
-	return posV.xyz / posV.w;
-}
-
 float4 PS( VS_OUT input ) : SV_TARGET
 {
-	// Reconstruct position from depth
 	float depth = gDepthMap.Sample( gDepthSampler, input.TexC ).r;
 
 	// Early exit if max depth, this can probably be removed if using a skymap.
 	clip( depth == 1.0f ? -1 : 1 );
 
-	float3 posVS = CalculatePosition( input.TexC, depth );
-	//float near = 0.1f;
-	//float far = 1000.0f;
-	//float fovY = 0.25f * 3.141592f;
-	////float s = cot(fovY * 0.5f) = cot(0.5f * 0.25f * pi)
-	//float s = 2.41421f;
-	//float aspect = 1280.0f/720.0f;
-	//float zEye = near * far / ((far - near) * depth - far);
-	//posVS = float3(
-	//	(2.0f * input.TexC.x - 1.0f) * -(zEye) / s * aspect,
-	//	-(2.0f * input.TexC.y - 1.0f) * -(zEye) / s,
-	//	-zEye);
+	float linearDepth = gProjB / (depth - gProjA);
+	float3 posVS = input.ViewRay * linearDepth;
 
-	// TODO: The normals are actually stored in world space right now.
 	// TODO: Normalize?
 	// Get the view space normal and transform into [-1,1] range
 	float3 normalVS = gNormalMap.Sample( gNormalSampler, input.TexC ).xyz * 2.0f - 1.0f;
-	normalVS = normalize(mul(normalVS, (float3x3)gView));
 
 	// Grab a normal for reflecting the sample rays later on. There are fixed
 	// vectors that are always the same (one for each sample). These vectors
@@ -165,9 +140,12 @@ float4 PS( VS_OUT input ) : SV_TARGET
 		occluderTexC.x = (projOffsetPos.x + 1.0f) * 0.5f;
 		occluderTexC.y = (-projOffsetPos.y + 1.0f) * 0.5f;
 
+		float3 occluderViewRay = float3(offsetPos.xy / offsetPos.z, 1.0f);
+
 		// Get the depth of the occluder fragment and use it to find it's position.
 		float occluderDepth = gDepthMap.Sample( gDepthSampler, occluderTexC ).r;
-		float3 occluderPos = CalculatePosition( occluderTexC, occluderDepth );
+		float linearOccluderDepth = gProjB / (occluderDepth - gProjA);
+		float3 occluderPos = occluderViewRay * linearOccluderDepth;
 
 		float3 directionToOccluder = normalize(occluderPos - posVS);
 
