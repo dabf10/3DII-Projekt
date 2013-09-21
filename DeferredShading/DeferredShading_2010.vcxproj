@@ -378,13 +378,24 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="DefaultShader.cpp" />
     <ClCompile Include="GBuffer.cpp" />
+    <ClCompile Include="LightScattering.cpp" />
+    <ClCompile Include="LightScatterPostProcess.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="RenderTechnique.cpp" />
+    <ClCompile Include="ShadowMap.cpp" />
     <ClCompile Include="SSAO.cpp" />
     <ClInclude Include="GBuffer.h" />
+    <ClInclude Include="LightScattering.h" />
+    <ClInclude Include="LightScatterPostProcess.h" />
+    <ClInclude Include="RenderTechnique.h" />
+    <ClInclude Include="ShaderMacroHelper.h" />
+    <ClInclude Include="ShadowMap.h" />
     <ClInclude Include="SSAO.h" />
+    <None Include="Common.fxh" />
     <None Include="DXUT\Optional\directx.ico" />
     <ClInclude Include="App.h" />
     <ClInclude Include="Camera.h" />
@@ -412,6 +423,8 @@
     <ClCompile Include="DXUT\Optional\DXUTsettingsdlg.cpp" />
     <ClCompile Include="DXUT\Optional\SDKmesh.cpp" />
     <ClCompile Include="DXUT\Optional\SDKmisc.cpp" />
+    <None Include="LightScattering.fx" />
+    <None Include="RefineSampleLocations.fx" />
     <None Include="Shaders\BilateralBlur.fx" />
     <None Include="Shaders\ClearGBuffer.fx" />
     <None Include="Shaders\CombineLight.fx" />
@@ -420,8 +433,10 @@
     <None Include="Shaders\GBuffer.fx" />
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />
+    <None Include="Shaders\Shadow.fx" />
     <None Include="Shaders\Spotlight.fx" />
     <None Include="Shaders\SSAO.fx" />
+    <None Include="Structures.fxh" />
   </ItemGroup>
   <ItemGroup>
   </ItemGroup>

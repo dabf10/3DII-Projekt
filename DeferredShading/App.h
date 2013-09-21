@@ -9,6 +9,7 @@
 #include "Camera.h"
 #include "SSAO.h"
 #include "GBuffer.h"
+#include "ShadowMap.h"
 #include <Windows.h>
 #include <xnamath.h>
 #include "d3dx11effect.h"
@@ -98,6 +99,8 @@ private:
 		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
 		float angle, float decayExponent );
 
+	void RenderSceneToShadowMap( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT4X4 lightViewVolume );
+
 private:
 	Model *mModel;
 	XMFLOAT4X4 mBthWorld[2];
@@ -167,6 +170,9 @@ private:
 	SSAO *mSSAO;
 
 	GBuffer *mGBuffer;
+
+	ShadowMap *mShadowMap;
+	ID3DX11Effect *mShadowFX;
 };
 
 #endif // _APP_H_

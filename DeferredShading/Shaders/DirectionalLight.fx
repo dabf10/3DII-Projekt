@@ -3,6 +3,14 @@
 // the specular light (which will always be considered white), to the alpha channel.
 // ############################################################################
 
+// New for shadow mapping
+static const float SHADOW_EPSILON = 0.001f;
+Texture2D gShadowMap;
+float gShadowMapSize;
+float gShadowMapDX;
+float4x4 gLightViewVolume;
+float4x4 gInvView;
+
 float3 gLightDirectionVS;
 float3 gLightColor;
 float gProjA;
@@ -61,6 +69,53 @@ VS_OUT VS( uint VertexID : SV_VertexID )
 	return output;
 }
 
+// New for shadow mapping.
+float CalcShadowFactor(float4 projTexC)
+{
+	// Complete projection by doing division by w. This takes us from HCS to NDC.
+	projTexC.xyz /= projTexC.w;
+
+	// Points outside the light volume are in shadow.
+	if (projTexC.x < -1.0f || projTexC.x > 1.0f ||
+		projTexC.y < -1.0f || projTexC.y > 1.0f ||
+		projTexC.z < 0.0f)
+		return 0.0f;
+
+	// Transform from NDC space to texture space (NDC->U/V).
+	// [-1,1]X[-1,1] -> [0,1]X[0,1]. v axis is inverted to point in right direction.
+	projTexC.x = +0.5f * projTexC.x + 0.5f;
+	projTexC.y = -0.5f * projTexC.y + 0.5f;
+
+	// Depth in NDC space.
+	float depth = projTexC.z;
+
+	//
+	// PCF Filtering
+	//
+
+	// Sample shadow map to get nearest depth to light.
+	float s0 = gShadowMap.Sample(gDepthSampler, projTexC.xy).r;
+	float s1 = gShadowMap.Sample(gDepthSampler, projTexC.xy + float2(gShadowMapDX, 0)).r;
+	float s2 = gShadowMap.Sample(gDepthSampler, projTexC.xy + float2(0, gShadowMapDX)).r;
+	float s3 = gShadowMap.Sample(gDepthSampler, projTexC.xy + float2(gShadowMapDX, gShadowMapDX)).r;
+
+	// Is the pixel depth <= shadow map value?
+	float result0 = depth <= s0 + SHADOW_EPSILON;
+	float result1 = depth <= s1 + SHADOW_EPSILON;
+	float result2 = depth <= s2 + SHADOW_EPSILON;
+	float result3 = depth <= s3 + SHADOW_EPSILON;
+
+	// Transform to texel space.
+	float2 texelPos = gShadowMapSize * projTexC.xy;
+
+	// Determine the interpolation amounts.
+	float2 t = frac(texelPos);
+
+	// Interpolate results.
+	return lerp(lerp(result0, result1, t.x),
+				lerp(result2, result3, t.x), t.y);
+}
+
 float4 PS( VS_OUT input ) : SV_TARGET
 {
 	// Get the data we need out of the G-Buffer.
@@ -82,6 +137,11 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float depth = gDepthMap.Sample( gDepthSampler, input.TexC ).r;
 	float linearDepth = gProjB / (depth - gProjA);
 	float3 posVS = input.ViewRay * linearDepth;
+
+	// New for shadow mapping
+	float4 posWS = mul(float4(posVS, 1.0f), gInvView);
+	float4 shadowMapCoords = mul(posWS, gLightViewVolume);
+	float shadowFactor = CalcShadowFactor(shadowMapCoords);
 
 	// After we compute the vector from the surface to the light (which in this
 	// case is the negated gLightDirection), we compute the diffuse light with
@@ -109,7 +169,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 		directionToCamera)), specularPower);
 
 	// Output the two lights
-	return float4(diffuseLight.rgb, specularLight);
+	return float4(diffuseLight.rgb * shadowFactor, specularLight * shadowFactor);
 }
 
 technique11 Technique0

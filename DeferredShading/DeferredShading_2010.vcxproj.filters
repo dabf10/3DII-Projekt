@@ -32,6 +32,12 @@
     <Filter Include="Application\GBuffer">
       <UniqueIdentifier>{a4c2201b-f15b-4b89-814b-24822c4b6541}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Application\LightScatterPostProcess">
+      <UniqueIdentifier>{1e5eae45-dea2-48ed-ac83-f9909a84766a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application\ShadowMap">
+      <UniqueIdentifier>{9ea5e10c-aab9-4f13-86bb-e1ed4092551f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="DXUT\Optional\directx.ico">
@@ -127,6 +133,21 @@
     <None Include="Shaders\FullscreenTexture.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Common.fxh">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
+    <None Include="LightScattering.fx">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
+    <None Include="RefineSampleLocations.fx">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
+    <None Include="Structures.fxh">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
+    <None Include="Shaders\Shadow.fx">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">
@@ -150,6 +171,21 @@
     <ClCompile Include="GBuffer.cpp">
       <Filter>Application\GBuffer</Filter>
     </ClCompile>
+    <ClCompile Include="LightScatterPostProcess.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="DefaultShader.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="LightScattering.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="RenderTechnique.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="ShadowMap.cpp">
+      <Filter>Application\ShadowMap</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h">
@@ -169,6 +205,21 @@
     </ClInclude>
     <ClInclude Include="GBuffer.h">
       <Filter>Application\GBuffer</Filter>
+    </ClInclude>
+    <ClInclude Include="LightScatterPostProcess.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="LightScattering.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="RenderTechnique.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="ShaderMacroHelper.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="ShadowMap.h">
+      <Filter>Application\ShadowMap</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

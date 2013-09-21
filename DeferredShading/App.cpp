@@ -36,7 +36,9 @@ App::App() :
 	mCullFront( 0 ),
 	mCullNone( 0 ),
 	mSSAO( 0 ),
-	mGBuffer( 0 )
+	mGBuffer( 0 ),
+	mShadowMap( 0 ),
+	mShadowFX( 0 )
 {
 }
 
@@ -212,6 +214,8 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCullBack );
 	SAFE_RELEASE( mCullFront );
 	SAFE_RELEASE( mCullNone );
+
+	SAFE_RELEASE( mShadowFX );
 }
 
 //--------------------------------------------------------------------------------------
@@ -250,6 +254,8 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
 	mSSAO = new SSAO( pd3dDevice, pBackBufferSurfaceDesc->Width / 2, pBackBufferSurfaceDesc->Height / 2, 18, 0.1f, 1.5f );
 	mGBuffer = new GBuffer( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height );
 
+	mShadowMap = new ShadowMap( pd3dDevice, 2048 );
+
 	return S_OK;
 }
 
@@ -268,6 +274,7 @@ void App::OnD3D11ReleasingSwapChain( )
 	SAFE_RELEASE( mCompositeSRV );
 	SAFE_DELETE( mSSAO );
 	SAFE_DELETE( mGBuffer );
+	SAFE_DELETE( mShadowMap );
 }
 
 
@@ -541,6 +548,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// Render to back buffer.
 	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
+	{
+		
+	}
+
 	//
 	// Generate an old-film looking effect
 	//
@@ -599,7 +610,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// 4 smaller in quadrants. Simply select what resource views to use
 		// and how many of those to draw.
 		ID3D11ShaderResourceView *srvs[4] = {
-			mSSAO->AOMap(),
+			//mSSAO->AOMap(),
+			mShadowMap->DepthMapSRV(),
 			mGBuffer->NormalSRV(),
 			mLightSRV,
 			mGBuffer->ColorSRV()
@@ -654,6 +666,58 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	mHUD.OnRender( fElapsedTime );
 	RenderText();
+}
+
+
+void App::RenderSceneToShadowMap( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT4X4 lightViewVolume )
+{
+		//
+		// Loop through two BTH logos
+		//
+		for (int logo = 0; logo < 2; ++logo)
+		{
+			XMMATRIX lightWVP = XMLoadFloat4x4(&mBthWorld[logo]) * XMLoadFloat4x4(&lightViewVolume);
+			mShadowFX->GetVariableByName("gLightWVP")->AsMatrix()->SetMatrix((float*)&lightWVP);
+
+			mShadowFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+			mModel->Render( pd3dImmediateContext );
+		}
+
+		//
+		// Floor
+		//
+
+		XMMATRIX lightWVP = XMLoadFloat4x4( &mFloorWorld ) * XMLoadFloat4x4(&lightViewVolume);
+		mShadowFX->GetVariableByName("gLightWVP")->AsMatrix()->SetMatrix((float*)&lightWVP);
+
+		UINT strides = 32;
+		UINT offsets = 0;
+		pd3dImmediateContext->IASetVertexBuffers( 0, 1, &mFloorVB, &strides, &offsets );
+
+		mShadowFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 6, 0 );
+
+		mShadowFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+		//
+		// Sphere model
+		//
+		
+		lightWVP = XMLoadFloat4x4(&mSphereWorld) * XMLoadFloat4x4(&lightViewVolume);
+		mShadowFX->GetVariableByName("gLightWVP")->AsMatrix()->SetMatrix((float*)&lightWVP);
+
+		mShadowFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mSphereModel->Render( pd3dImmediateContext );
+
+		//
+		// Cone model
+		//
+
+		lightWVP = XMLoadFloat4x4(&mConeWorld) * XMLoadFloat4x4(&lightViewVolume);
+		mShadowFX->GetVariableByName("gLightWVP")->AsMatrix()->SetMatrix((float*)&lightWVP);
+
+		mShadowFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mConeModel->Render( pd3dImmediateContext );
 }
 
 
@@ -780,6 +844,13 @@ bool App::BuildFX(ID3D11Device *device)
 	//
 
 	if (!CompileShader( device, "Shaders/OldFilm.fx", &mOldFilmFX ))
+		return false;
+
+	//
+	// Shadow
+	//
+
+	if (!CompileShader( device, "Shaders/Shadow.fx", &mShadowFX ))
 		return false;
 
 	return true;
@@ -940,11 +1011,39 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 
 void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction )
 {
+	// New for shadow mapping
+	UINT numViewports = 1;
+	D3D11_VIEWPORT oldViewport;
+	pd3dImmediateContext->RSGetViewports( &numViewports, &oldViewport );
+	mShadowMap->BindDsvAndSetNullRenderTarget( pd3dImmediateContext );
+
+	static XMVECTOR up = XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f );
+	XMMATRIX lightView = XMMatrixLookAtLH( -30.0f * XMLoadFloat3(&direction), XMVectorSet( 0.0f, 0.0f, 0.0f, 0.0f ), up );
+	XMMATRIX lightVolume = XMMatrixOrthographicLH( 100, 100, 0.1f, 1000.0f );
+	XMFLOAT4X4 lightViewVolume;
+	XMStoreFloat4x4( &lightViewVolume, XMMatrixMultiply( lightView, lightVolume ) );
+	RenderSceneToShadowMap( pd3dImmediateContext, lightViewVolume );
+
+	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(mCamera.View()), mCamera.View());
+
+	ID3D11RenderTargetView *rtvs[1] = { mLightRT };
+	pd3dImmediateContext->RSSetViewports( numViewports, &oldViewport );
+	pd3dImmediateContext->OMSetRenderTargets( 1, rtvs, 0 );
+
+	// Original code, except for shadow stuffs
 	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mDirectionalLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(XMLoadFloat3(&direction), mCamera.View()));
+	mDirectionalLightFX->GetVariableByName("gShadowMap")->AsShaderResource()->SetResource( mShadowMap->DepthMapSRV() );
+	mDirectionalLightFX->GetVariableByName("gShadowMapSize")->AsScalar()->SetFloat(mShadowMap->Resolution());
+	mDirectionalLightFX->GetVariableByName("gShadowMapDX")->AsScalar()->SetFloat(1.0f/mShadowMap->Resolution());
+	mDirectionalLightFX->GetVariableByName("gLightViewVolume")->AsMatrix()->SetMatrix((float*)&lightViewVolume);
+	mDirectionalLightFX->GetVariableByName("gInvView")->AsMatrix()->SetMatrix((float*)&invView);
 
 	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
+
+	mDirectionalLightFX->GetVariableByName("gShadowMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 }
 
 // TODO: Would be nice to use depth buffer to depth-test light volumes. But
