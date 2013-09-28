@@ -40,10 +40,12 @@ App::App() :
 	mShadowMap( 0 ),
 	mShadowFX( 0 )
 {
+	mLightSctrPostProcess = new CLightSctrPostProcess;
 }
 
 App::~App()
 {
+	SAFE_DELETE( mLightSctrPostProcess );
 }
 
 //--------------------------------------------------------------------------------------
@@ -162,6 +164,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullFront ) );
 	rsDesc.CullMode = D3D11_CULL_NONE;
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullNone ) );
+
+	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
     
 	return S_OK;
 }
@@ -216,6 +220,8 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCullNone );
 
 	SAFE_RELEASE( mShadowFX );
+
+	mLightSctrPostProcess->OnDestroyDevice();
 }
 
 //--------------------------------------------------------------------------------------
@@ -255,6 +261,8 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
 	mGBuffer = new GBuffer( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height );
 
 	mShadowMap = new ShadowMap( pd3dDevice, 2048 );
+
+	mLightSctrPostProcess->OnResizedSwapChain( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height );
 
 	return S_OK;
 }
@@ -515,13 +523,13 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//
 	// SSAO
 	//
-
+	
 	// Because SSAO changes viewport (normally only renders to a quarter size of backbuffer)
 	// we need to reset the viewport after.
 	D3D11_VIEWPORT fullViewport;
 	UINT numViewports = 1;
 	pd3dImmediateContext->RSGetViewports(&numViewports, &fullViewport);
-
+	
 	mSSAO->CalculateSSAO(
 		mMainDepthSRV, mGBuffer->NormalSRV(), mCamera.Proj(), pd3dImmediateContext );
 
@@ -549,7 +557,113 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
 	{
+		// Get the camera position
+		D3DXMATRIX CameraWorld;
+		D3DXMatrixInverse(&CameraWorld, NULL, &D3DXMATRIX((float*)&mCamera.View()));
+		D3DXVECTOR3 CameraPos = *(D3DXVECTOR3*)&CameraWorld._41;
+
+		// Hardcoded directional light values
+		D3DXVECTOR3 dirOnLight = D3DXVECTOR3(-0, -(-1), -1);
+		D3DXVECTOR4 lightColorAndIntensity, ambientLight;
+		mLightSctrPostProcess->ComputeSunColor( dirOnLight, lightColorAndIntensity, ambientLight );
+
+		SFrameAttribs frameAttribs;
+		frameAttribs.pd3dDevice = pd3dDevice;
+		frameAttribs.pd3dDeviceContext = pd3dImmediateContext;
+
+		frameAttribs.LightAttribs.f4DirOnLight = D3DXVECTOR4(dirOnLight.x, dirOnLight.y, dirOnLight.z, 0);
+
+		float dist = 30;
+		(D3DXVECTOR3&)frameAttribs.LightAttribs.f4LightWorldPos = D3DXVECTOR3(dirOnLight.x * dist, dirOnLight.y * dist, dirOnLight.z * dist);
+		frameAttribs.LightAttribs.f4LightWorldPos.w = 1;
+
+		frameAttribs.LightAttribs.f4LightColorAndIntensity = lightColorAndIntensity;
+		frameAttribs.LightAttribs.f4AmbientLight = ambientLight;
+
+		D3DXMATRIX lightView;
+		D3DXMatrixLookAtLH(&lightView, (D3DXVECTOR3*)&frameAttribs.LightAttribs.f4LightWorldPos, &D3DXVECTOR3(0, 0, 0), &D3DXVECTOR3(0, 1, 0));
+		D3DXMATRIX lightProj;
+		D3DXMatrixOrthoLH(&lightProj, 100, 100, 0.1, 1000.0f);
+		D3DXMATRIX worldToLightProj;
+		D3DXMatrixMultiply(&worldToLightProj, &lightView, &lightProj);
+		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightViewT, &lightView );
+		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightProjT, &lightProj );
+		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mWorldToLightProjSpaceT, &worldToLightProj);
+		XMMATRIX cameraViewProjInverseXM = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
+		D3DXMATRIX cameraViewProjInverse = D3DXMATRIX((float*)&cameraViewProjInverseXM);
+		D3DXMATRIX mCameraProjToLightProj = cameraViewProjInverse * (*worldToLightProj);
+		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mCameraProjToLightProjSpaceT, &mCameraProjToLightProj);
+
+		// Calculate location of the sun on the screen
+        D3DXVECTOR4 &f4LightPosPS = frameAttribs.LightAttribs.f4LightScreenPos;
+		D3DXVec4Transform(&f4LightPosPS, &frameAttribs.LightAttribs.f4DirOnLight, &D3DXMATRIX((float*)&mCamera.ViewProj()));
+		f4LightPosPS /= f4LightPosPS.w;
+		float fDistToLightOnScreen = D3DXVec2Length( (D3DXVECTOR2*)&f4LightPosPS );
+        float fMaxDist = 100;
+		if( fDistToLightOnScreen > fMaxDist )
+            (D3DXVECTOR2&)f4LightPosPS *= fMaxDist/fDistToLightOnScreen;
+
+		frameAttribs.LightAttribs.bIsLightOnScreen = abs(f4LightPosPS.x) <= 1 && abs(f4LightPosPS.y) <= 1;
+
+		// Compute camera UV in shadow map
+        D3DXVECTOR4 f4CameraPosInLightProjSpace;
+        D3DXMATRIX mWorldToLightProjSpace;
+        D3DXVECTOR4 f4CameraPos = D3DXVECTOR4(CameraPos.x, CameraPos.y, CameraPos.z, 1);
+        D3DXVec4Transform(&f4CameraPosInLightProjSpace, &f4CameraPos, &worldToLightProj);
+        (D3DXVECTOR3&)f4CameraPosInLightProjSpace /= f4CameraPosInLightProjSpace.w;
+        (D3DXVECTOR2&)frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap = D3DXVECTOR2(0.5f + 0.5f*f4CameraPosInLightProjSpace.x, 0.5f - 0.5f*f4CameraPosInLightProjSpace.y);
+        frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.z = f4CameraPosInLightProjSpace.z;
+        frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.w = f4CameraPosInLightProjSpace.w;
+
+		frameAttribs.CameraAttribs.f4CameraPos = D3DXVECTOR4(CameraPos.x, CameraPos.y, CameraPos.z, 0);            ///< Camera world position
+        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewT, &D3DXMATRIX((float*)&mCamera.View()));
+        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mProjT, &D3DXMATRIX((float*)&mCamera.Proj()));
+        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewProjInvT, &cameraViewProjInverse);
+
+		frameAttribs.ptex2DSrcColorBufferSRV = mCompositeSRV;
+        frameAttribs.ptex2DDepthBufferSRV    = mMainDepthSRV;
+        frameAttribs.ptex2DShadowMapSRV      = mShadowMap->DepthMapSRV();
+        frameAttribs.pDstRTV                 = rtv;
+        frameAttribs.pDstDSV                 = 0;
+		ID3D11ShaderResourceView *srv = 0;
+		frameAttribs.ptex2DStainedGlassSRV	 = srv;
+
+		SPostProcessingAttribs ppAttribs;
+		ppAttribs.m_bAnisotropicPhaseFunction = FALSE;
+		ppAttribs.m_bCorrectScatteringAtDepthBreaks = TRUE;
+		ppAttribs.m_bOptimizeSampleLocations = TRUE;
+		ppAttribs.m_bShowDepthBreaks = FALSE;
+		ppAttribs.m_bShowLightingOnly = FALSE;
+		ppAttribs.m_bShowSampling = FALSE;
+		ppAttribs.m_bStainedGlass = FALSE;
+		ppAttribs.m_f2ShadowMapTexelSize = D3DXVECTOR2(1.0f/mShadowMap->Resolution(), 1.0f/mShadowMap->Resolution());
+		D3DXVECTOR4 f4MieColor = ppAttribs.m_f4MieBeta / SPostProcessingAttribs().m_f4MieBeta.x;
+		ppAttribs.m_f4MieBeta = f4MieColor * SPostProcessingAttribs().m_f4MieBeta.x;
+		D3DXVECTOR4 f4RlghColor = ppAttribs.m_f4RayleighBeta / SPostProcessingAttribs().m_f4RayleighBeta.z;
+		ppAttribs.m_f4RayleighBeta = f4RlghColor * SPostProcessingAttribs().m_f4RayleighBeta.z;
+		ppAttribs.m_fMaxTracingDistance = 100;
+		ppAttribs.m_fDistanceScaler = 60000.f / ppAttribs.m_fMaxTracingDistance;
+		ppAttribs.m_fDownscaleFactor = 1.f;
+		ppAttribs.m_fExposure = 1.f;
+		ppAttribs.m_fRefinementThreshold = 20.f;
+		ppAttribs.m_uiAccelStruct = 1;
+		ppAttribs.m_uiEpipoleSamplingDensityFactor = 4;
+		ppAttribs.m_uiInitialSampleStepInSlice = 16;
+		ppAttribs.m_uiInsctrIntglEvalMethod = 0;
+		ppAttribs.m_uiLightSctrTechnique = 0;
+		ppAttribs.m_uiLightType = 0;
+		ppAttribs.m_uiMaxSamplesInSlice = 512;
+		ppAttribs.m_uiMaxShadowMapStep = mShadowMap->Resolution() / 32;
+		ppAttribs.m_uiMinMaxShadowMapResolution = mShadowMap->Resolution();
+		ppAttribs.m_uiNumEpipolarSlices = 1024;
+		ppAttribs.m_uiShadowMapResolution = mShadowMap->Resolution();
 		
+		mLightSctrPostProcess->PerformPostProcessing(frameAttribs, ppAttribs);
+
+		// These are changed in the post process.
+		pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
+		pd3dImmediateContext->RSSetState( 0 );
+		pd3dImmediateContext->OMSetBlendState( 0, 0, 0xFFFFFFFF );
 	}
 
 	//
@@ -582,20 +696,20 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//}
 
 	// Render a full screen triangle to place content of CompositeSRV on the back buffer.
-	{
-		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
+	//{
+	//	mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
 
-		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		pd3dImmediateContext->Draw( 3, 0 );
+	//	mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//	pd3dImmediateContext->Draw( 3, 0 );
 
-		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
-		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	}
+	//	mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
+	//	mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//}
 
 	//
 	// Full-screen textured quad
 	//
-
+	
 	// Specify 1 or 4.
 	UINT numImages = 0;
 

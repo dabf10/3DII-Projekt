@@ -183,13 +183,24 @@ SScreenSizeQuadVSOutput GenerateScreenSizeQuadVS(in uint VertexId : SV_VertexID)
         {float4(MinMaxUV.zy, 1.0, 1.0), MinMaxUV.zy},
         {float4(MinMaxUV.zw, 1.0, 1.0), MinMaxUV.zw}
     };
-
+	
     return Verts[VertexId];
+
+	//SScreenSizeQuadVSOutput vert;
+
+	//vert.m_f4Pos.x = (VertexId == 2) ? 3.0f : -1.0f;
+	//vert.m_f4Pos.y = (VertexId == 0) ? -3.0f : 1.0f;
+	//vert.m_f4Pos.zw = 1.0f;
+
+	//vert.m_f2PosPS = vert.m_f4Pos.xy * float2(0.5f, -0.5f) + 0.5f;
+
+	//return vert;
 }
 
 float ReconstructCameraSpaceZPS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     float fDepth = g_tex2DDepthBuffer.Load( uint3(In.m_f4Pos.xy,0) );
+	//float fDepth = g_tex2DDepthBuffer.SampleLevel( samLinearClamp, In.m_f4Pos.xy, 0 );
     float fCamSpaceZ = g_CameraAttribs.mProj[3][2]/(fDepth - g_CameraAttribs.mProj[2][2]);
     return fCamSpaceZ;
 };

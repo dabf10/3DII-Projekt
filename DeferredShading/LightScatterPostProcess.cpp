@@ -437,7 +437,27 @@ void CLightSctrPostProcess :: ReconstructCameraSpaceZ(SFrameAttribs &FrameAttrib
     RenderQuad( FrameAttribs.pd3dDeviceContext, 
                 m_ReconstrCamSpaceZTech,
                 m_uiBackBufferWidth, m_uiBackBufferHeight );
+    
+    //D3D11_VIEWPORT NewViewPort;
+    //NewViewPort.TopLeftX = static_cast<float>( 0 );
+    //NewViewPort.TopLeftY = static_cast<float>( 0 );
+    //NewViewPort.Width  = static_cast<float>( m_uiBackBufferWidth );
+    //NewViewPort.Height = static_cast<float>( m_uiBackBufferHeight );
+    //NewViewPort.MinDepth = 0;
+    //NewViewPort.MaxDepth = 1;
+    //// Set the viewport
+    //FrameAttribs.pd3dDeviceContext->RSSetViewports(1, &NewViewPort);  
+
+    //m_ReconstrCamSpaceZTech.Apply();
+    //// Draw 4 vertices (two triangles )
+    ////FrameAttribs.pd3dDeviceContext->Draw(3, 0);
+    //
+    //// Unbind resources
+    //UnbindResources( FrameAttribs.pd3dDeviceContext );
+
+
     FrameAttribs.pd3dDeviceContext->OMSetRenderTargets(0, NULL, NULL);
+	FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 }
 
 void CLightSctrPostProcess :: RenderSliceEndpoints(SFrameAttribs &FrameAttribs)
@@ -679,6 +699,7 @@ void CLightSctrPostProcess :: Build1DMinMaxMipMap(SFrameAttribs &FrameAttribs)
                         (iStep>2) ? m_ComputeMinMaxSMLevelTech : m_InitializeMinMaxShadowMapTech,
                         m_PostProcessingAttribs.m_uiMinMaxShadowMapResolution / iStep, m_PostProcessingAttribs.m_uiNumEpipolarSlices, 
                         uiXOffset, 0 );
+			FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 
             // All the data must reside in 0-th texture, so copy current level, if necessary, from 1-st texture
             if( uiParity == 1 )
@@ -748,6 +769,7 @@ void CLightSctrPostProcess :: DoRayMarching(SFrameAttribs &FrameAttribs, UINT ui
                 DoRayMarchTech,
                 m_PostProcessingAttribs.m_uiMaxSamplesInSlice, m_PostProcessingAttribs.m_uiNumEpipolarSlices );
     FrameAttribs.pd3dDeviceContext->OMSetRenderTargets(0, NULL, NULL);
+	FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 }
 
 void CLightSctrPostProcess :: InterpolateInsctrIrradiance(SFrameAttribs &FrameAttribs)
@@ -820,6 +842,7 @@ void CLightSctrPostProcess :: UnwarpEpipolarScattering(SFrameAttribs &FrameAttri
     // will have 1 in stencil. The remaining will be discarded and as a result keep 0 value. These samples will be lately correct
     // through additional ray marching pass
     RenderQuad( FrameAttribs.pd3dDeviceContext, UnwarpEpipolarSctrImgTech );
+	FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 }
 
 void CLightSctrPostProcess :: FixInscatteringAtDepthBreaks(SFrameAttribs &FrameAttribs, bool bAttenuateBackground, UINT uiMaxStepsAlongRay)
@@ -857,6 +880,7 @@ void CLightSctrPostProcess :: FixInscatteringAtDepthBreaks(SFrameAttribs &FrameA
     FrameAttribs.pd3dDeviceContext->PSSetConstantBuffers(4, 1, &m_pcbMiscParams.p);
 
     RenderQuad( FrameAttribs.pd3dDeviceContext, FixInsctrAtDepthBreaksTech );
+	FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 }
 
 void CLightSctrPostProcess :: UpscaleInscatteringRadiance(SFrameAttribs &FrameAttribs)
@@ -884,6 +908,7 @@ void CLightSctrPostProcess :: UpscaleInscatteringRadiance(SFrameAttribs &FrameAt
     FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, _countof(pSRVs), pSRVs);
     
     RenderQuad( FrameAttribs.pd3dDeviceContext, m_UpscaleInsctrdRadianceTech );
+	FrameAttribs.pd3dDeviceContext->PSSetShaderResources(0, 0, 0);
 }
 
 void CLightSctrPostProcess :: RenderSampleLocations(SFrameAttribs &FrameAttribs)
@@ -1034,12 +1059,12 @@ void CLightSctrPostProcess :: PerformPostProcessing(SFrameAttribs &FrameAttribs,
         ComputeScatteringCoefficients(FrameAttribs.pd3dDeviceContext);
         m_ptex2DPrecomputedPointLightInsctrSRV.Release();
     }
-
+	
     if( !m_ptex2DCoordianteTextureRTV || !m_ptex2DCoordianteTextureSRV )
     {
         V( CreateTextures(FrameAttribs.pd3dDevice) );
     }
-
+	
     if( m_PostProcessingAttribs.m_fDownscaleFactor > 1 && !m_ptex2DDownscaledScatteredLightSRV )
     {
         V( CreateDownscaledInscatteringTextures(FrameAttribs.pd3dDevice, 
@@ -1051,7 +1076,7 @@ void CLightSctrPostProcess :: PerformPostProcessing(SFrameAttribs &FrameAttribs,
     {
         V( CreateMinMaxShadowMap(FrameAttribs.pd3dDevice) );
     }
-
+	
     SLightAttribs &LightAttribs = FrameAttribs.LightAttribs;
     const SCameraAttribs &CamAttribs = FrameAttribs.CameraAttribs;
 
@@ -1070,24 +1095,23 @@ void CLightSctrPostProcess :: PerformPostProcessing(SFrameAttribs &FrameAttribs,
     FrameAttribs.pd3dDeviceContext->GSSetConstantBuffers(0, _countof(pCBs), pCBs);
     FrameAttribs.pd3dDeviceContext->PSSetConstantBuffers(0, _countof(pCBs), pCBs);
     FrameAttribs.pd3dDeviceContext->CSSetConstantBuffers(0, _countof(pCBs), pCBs);
-    
-
+	
     ID3D11SamplerState *pSamplers[] = { m_psamLinearClamp, m_psamLinearBorder0, m_psamLinearUClampVWrap, m_psamComparison };
     FrameAttribs.pd3dDeviceContext->PSSetSamplers(0, _countof(pSamplers), pSamplers);
 
     D3D11_VIEWPORT OrigViewPort;
     UINT iNumOldViewports = 1;
     FrameAttribs.pd3dDeviceContext->RSGetViewports(&iNumOldViewports, &OrigViewPort);
-
+	
     if( (m_PostProcessingAttribs.m_uiLightType == LIGHT_TYPE_SPOT || m_PostProcessingAttribs.m_uiLightType == LIGHT_TYPE_POINT ) && 
         (m_PostProcessingAttribs.m_uiInsctrIntglEvalMethod == INSCTR_INTGL_EVAL_METHOD_MY_LUT || m_PostProcessingAttribs.m_uiInsctrIntglEvalMethod == INSCTR_INTGL_EVAL_METHOD_SRNN05) &&
         !m_ptex2DPrecomputedPointLightInsctrSRV )
     {
         V( CreatePrecomputedPointLightInscatteringTexture(FrameAttribs.pd3dDevice, FrameAttribs.pd3dDeviceContext) );
     }
-
+	
     ReconstructCameraSpaceZ(FrameAttribs);
-
+	
     if( m_PostProcessingAttribs.m_uiLightSctrTechnique == LIGHT_SCTR_TECHNIQUE_EPIPOLAR_SAMPLING )
     {
         
