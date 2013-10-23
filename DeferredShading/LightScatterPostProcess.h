@@ -20,6 +20,8 @@ public:
 
 	ID3D11ShaderResourceView *CameraSpaceZ( void ) const { return mCameraSpaceZSRV; }
 	ID3D11ShaderResourceView *SliceEndpoints( void ) const { return mSliceEndpointsSRV; }
+	ID3D11ShaderResourceView *CoordinateTexture( void ) const { return mCoordinateTextureSRV; }
+	ID3D11ShaderResourceView *EpipolarCamSpaceZ( void ) const { return mEpipolarCamSpaceZSRV; }
 
 private:
 	LightScatterPostProcess &operator=( const LightScatterPostProcess &rhs );
@@ -29,6 +31,7 @@ private:
 		ID3D11ShaderResourceView *sceneDepth );
 	void RenderSliceEndpoints( ID3D11DeviceContext *pd3dDeviceContext );
 	void RenderCoordinateTexture( ID3D11DeviceContext *pd3dDeviceContext );
+	void RefineSampleLocations( void );
 
 	void CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx );
 	void CreateTextures( ID3D11Device *pd3dDevice );

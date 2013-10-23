@@ -23,7 +23,7 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	CompileShader( pd3dDevice, "Shaders/LightScatter.fx", &mLightScatterFX );
 	mReconstructCameraSpaceZTech = mLightScatterFX->GetTechniqueByName("ReconstructCameraSpaceZ");
 	mGenerateSliceEndpointsTech = mLightScatterFX->GetTechniqueByName("GenerateSliceEndpoints");
-	mRenderCoordinateTextureTech = mLightScatterFX->GetTechniqueByName("RenderCoordinateTexture");
+	mRenderCoordinateTextureTech = mLightScatterFX->GetTechniqueByName("GenerateCoordinateTexture");
 
 	//
 	// Create states
@@ -218,14 +218,17 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	// Requires: Scene depth, camera proj
 	ReconstructCameraSpaceZ( pd3dDeviceContext, sceneDepth );
 
-	// HEST: Seems like: Pre step 2: Render slice end points
+	// Pre step 2: Render slice end points. Stores entry and exit points of
+	// epipolar lines for every slice.
 	// Requires:
-	// HEST: Varför görs dessa? Vad används det till?
 	RenderSliceEndpoints( pd3dDeviceContext );
 
 	// Step 2: Render coordinate textures (epipolar coordinates, camera space z, and depth stencil)
 	// Requires:
-	//RenderCoordinateTexture( pd3dDeviceContext );
+	RenderCoordinateTexture( pd3dDeviceContext );
+
+	// Step 3: Refine sample locations (initial ray marching samples)
+	RefineSampleLocations( );
 }
 
 void LightScatterPostProcess::ReconstructCameraSpaceZ( ID3D11DeviceContext *pd3dDeviceContext,
@@ -315,7 +318,7 @@ void LightScatterPostProcess::RenderCoordinateTexture( ID3D11DeviceContext *pd3d
 	vp.MaxDepth = 1;
 	pd3dDeviceContext->RSSetViewports( 1, &vp );
 
-	mLightScatterFX->GetVariableByName("gSceneDepth")->AsShaderResource()->SetResource( mCameraSpaceZSRV );
+	mLightScatterFX->GetVariableByName("gCamSpaceZ")->AsShaderResource()->SetResource( mCameraSpaceZSRV );
 	mLightScatterFX->GetVariableByName("gSliceEndPoints")->AsShaderResource()->SetResource( mSliceEndpointsSRV );
 
 	// Depth stencil state is configured to always increment stencil value. If
@@ -326,11 +329,16 @@ void LightScatterPostProcess::RenderCoordinateTexture( ID3D11DeviceContext *pd3d
 	pd3dDeviceContext->Draw( 3, 0 );
 
 	// Unbind shader resources
-	mLightScatterFX->GetVariableByName("gSceneDepth")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gCamSpaceZ")->AsShaderResource()->SetResource( 0 );
 	mLightScatterFX->GetVariableByName("gSliceEndPoints")->AsShaderResource()->SetResource( 0 );
 	mRenderCoordinateTextureTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
 
 	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
+}
+
+void LightScatterPostProcess::RefineSampleLocations( void )
+{
+
 }
 
 void LightScatterPostProcess::CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx )

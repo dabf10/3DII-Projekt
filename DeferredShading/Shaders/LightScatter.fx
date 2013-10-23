@@ -1,4 +1,4 @@
-Texture2D<float> gSceneDepth;
+Texture2D<float> gSceneDepth : register( t0 );
 float4x4 gCameraProj;
 
 uint gNumEpipolarSlices;
@@ -7,6 +7,16 @@ float2 gScreenResolution;
 float4 gLightScreenPos;
 #define FLT_MAX 3.402823466e+38f
 uint gMaxSamplesInSlice;
+
+Texture2D<float> gCamSpaceZ : register( t0 );
+Texture2D<float4> gSliceEndPoints : register( t4 );
+
+SamplerState gSamLinearClamp : register( s0 )
+{
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = CLAMP;
+	AddressV = CLAMP;
+};
 
 struct FullScreenTriangleVSOut
 {
@@ -142,7 +152,8 @@ float2 GetEpipolarLineEntryPoint(float2 exitPoint)
 
 float4 GenerateSliceEndpointsPS( FullScreenTriangleVSOut input ) : SV_TARGET
 {
-	float2 uv = ProjToUV( input.TexC );
+	//float2 uv = ProjToUV( input.TexC );
+	float2 uv = input.TexC;
 
 	// Offset a half texel. Also clamp to [0,1] range.
 	float epipolarSlice = saturate( uv.x - 0.5f / (float)gNumEpipolarSlices );
@@ -209,9 +220,61 @@ technique11 GenerateSliceEndpoints
 	}
 }
 
-technique11 RenderCoordinateTexture
+float GetCamSpaceZ(in float2 screenSpaceUV)
+{
+	return gCamSpaceZ.SampleLevel( gSamLinearClamp, screenSpaceUV, 0 );
+}
+
+void GenerateCoordinateTexturePS( FullScreenTriangleVSOut input,
+								 out float2 xy : SV_TARGET0,
+								 out float camSpaceZ : SV_TARGET1)
+{
+	float4 sliceEndPoints = gSliceEndPoints.Load( int3(input.PosH.y, 0, 0) );
+
+	// If slice entry point is outside [-1,1]x[-1,1] area, the slice is completely
+	// invisible and we can skip it from further processing. Note that slice exit
+	// point can lie outside the screen, if sample locations are optimized.
+	// Recall that all correct entry points are completely inside [-1,1]x[-1,1].
+	if (any(abs(sliceEndPoints.xy) > 1))
+	{
+		// Discard invalid slices, such slices will not be marked in the stencil
+		// and as a result will always be skipped.
+		discard;
+	}
+
+	//float2 uv = ProjToUV(input.TexC);
+	float2 uv = input.TexC;
+
+	// Offset UV coordinates by half a texel.
+	float samplePosOnEpipolarLine = uv.x - 0.5f / (float)gMaxSamplesInSlice;
+
+	// samplePosOnEpipolarLine is now in the range [0, 1 - 1 / gMaxSamplesInSlice].
+	// We need to rescale it to [0,1].
+	samplePosOnEpipolarLine *= (float)gMaxSamplesInSlice / ((float)gMaxSamplesInSlice - 1.0f);
+	samplePosOnEpipolarLine = saturate(samplePosOnEpipolarLine);
+
+	// Compute interpolated position between entry and exit points.
+	xy = lerp(sliceEndPoints.xy, sliceEndPoints.zw, samplePosOnEpipolarLine);
+
+	// All correct entry points are completely inside the [-1,1]x[-1,1] area.
+	if (any(abs(xy) > 1))
+	{
+		// Discard pixels that fall behind the screen. This can happen if slice
+		// exit point was optimized.
+		discard;
+	}
+
+	// Compute camera space z for current location.
+	camSpaceZ = GetCamSpaceZ( ProjToUV( xy ) );
+}
+
+technique11 GenerateCoordinateTexture
 {
 	pass p0
 	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, GenerateCoordinateTexturePS() ) );
 	}
 }
+
