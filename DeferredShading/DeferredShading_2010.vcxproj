@@ -378,10 +378,9 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="DefaultShader.cpp" />
     <ClCompile Include="GBuffer.cpp" />
-    <ClCompile Include="LightScattering.cpp" />
     <ClCompile Include="LightScatterPostProcess.cpp" />
+    <ClCompile Include="LightSctrPostProcess.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="OBJLoader.cpp" />
@@ -389,10 +388,9 @@
     <ClCompile Include="ShadowMap.cpp" />
     <ClCompile Include="SSAO.cpp" />
     <ClInclude Include="GBuffer.h" />
-    <ClInclude Include="LightScattering.h" />
     <ClInclude Include="LightScatterPostProcess.h" />
+    <ClInclude Include="LightSctrPostProcess.h" />
     <ClInclude Include="RenderTechnique.h" />
-    <ClInclude Include="ShaderMacroHelper.h" />
     <ClInclude Include="ShadowMap.h" />
     <ClInclude Include="SSAO.h" />
     <None Include="Common.fxh" />
@@ -431,6 +429,7 @@
     <None Include="Shaders\DirectionalLight.fx" />
     <None Include="Shaders\FullscreenTexture.fx" />
     <None Include="Shaders\GBuffer.fx" />
+    <None Include="Shaders\LightScatter.fx" />
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />
     <None Include="Shaders\Shadow.fx" />

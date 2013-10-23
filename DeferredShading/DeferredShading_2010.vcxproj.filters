@@ -148,6 +148,9 @@
     <None Include="Shaders\Shadow.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\LightScatter.fx">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">
@@ -171,20 +174,17 @@
     <ClCompile Include="GBuffer.cpp">
       <Filter>Application\GBuffer</Filter>
     </ClCompile>
-    <ClCompile Include="LightScatterPostProcess.cpp">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClCompile>
-    <ClCompile Include="DefaultShader.cpp">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClCompile>
-    <ClCompile Include="LightScattering.cpp">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClCompile>
     <ClCompile Include="RenderTechnique.cpp">
       <Filter>Application\LightScatterPostProcess</Filter>
     </ClCompile>
     <ClCompile Include="ShadowMap.cpp">
       <Filter>Application\ShadowMap</Filter>
+    </ClCompile>
+    <ClCompile Include="LightSctrPostProcess.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClCompile>
+    <ClCompile Include="LightScatterPostProcess.cpp">
+      <Filter>Application\LightScatterPostProcess</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -206,20 +206,17 @@
     <ClInclude Include="GBuffer.h">
       <Filter>Application\GBuffer</Filter>
     </ClInclude>
-    <ClInclude Include="LightScatterPostProcess.h">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClInclude>
-    <ClInclude Include="LightScattering.h">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClInclude>
     <ClInclude Include="RenderTechnique.h">
-      <Filter>Application\LightScatterPostProcess</Filter>
-    </ClInclude>
-    <ClInclude Include="ShaderMacroHelper.h">
       <Filter>Application\LightScatterPostProcess</Filter>
     </ClInclude>
     <ClInclude Include="ShadowMap.h">
       <Filter>Application\ShadowMap</Filter>
+    </ClInclude>
+    <ClInclude Include="LightSctrPostProcess.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </ClInclude>
+    <ClInclude Include="LightScatterPostProcess.h">
+      <Filter>Application\LightScatterPostProcess</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

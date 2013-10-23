@@ -10,6 +10,7 @@
 #include "SSAO.h"
 #include "GBuffer.h"
 #include "ShadowMap.h"
+#include "LightSctrPostProcess.h"
 #include "LightScatterPostProcess.h"
 #include <Windows.h>
 #include <xnamath.h>
@@ -176,6 +177,7 @@ private:
 	ID3DX11Effect *mShadowFX;
 
 	CLightSctrPostProcess *mLightSctrPostProcess;
+	LightScatterPostProcess *mLightScatterPostProcess;
 };
 
 #endif // _APP_H_

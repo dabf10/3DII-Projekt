@@ -1,5 +1,5 @@
 //--------------------------------------------------------------------------------------
-// Copyright 2013 Intel Corporation
+// Copyright 2011 Intel Corporation
 // All Rights Reserved
 //
 // Permission is granted to use, copy, distribute and prepare derivative works of this
@@ -17,47 +17,6 @@
 #include "Structures.fxh"
 
 #define FLT_MAX 3.402823466e+38f
-
-// Using static definitions instead of constant buffer variables is 
-// more efficient because the compiler is able to optimize the code 
-// more aggressively
-
-#ifndef NUM_EPIPOLAR_SLICES
-#   define NUM_EPIPOLAR_SLICES 1024
-#endif
-
-#ifndef MAX_SAMPLES_IN_SLICE
-#   define MAX_SAMPLES_IN_SLICE 512
-#endif
-
-#ifndef SCREEN_RESLOUTION
-#   define SCREEN_RESLOUTION float2(1024,768)
-#endif
-
-#ifndef ACCEL_STRUCT
-#   define ACCEL_STRUCT ACCEL_STRUCT_BV_TREE
-#endif
-
-#if ACCEL_STRUCT == ACCEL_STRUCT_BV_TREE
-#   define MIN_MAX_DATA_FORMAT float4
-#elif ACCEL_STRUCT == ACCEL_STRUCT_MIN_MAX_TREE
-#   define MIN_MAX_DATA_FORMAT float2
-#else
-#   define MIN_MAX_DATA_FORMAT float2
-#endif
-
-#ifndef INSCTR_INTGL_EVAL_METHOD
-#   define INSCTR_INTGL_EVAL_METHOD INSCTR_INTGL_EVAL_METHOD_MY_LUT
-#endif
-
-#if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-#   define INSCTR_LUT_FORMAT float3
-#elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-#   define INSCTR_LUT_FORMAT float
-#endif
-#ifndef INSCTR_LUT_FORMAT
-#   define INSCTR_LUT_FORMAT float
-#endif
 
 cbuffer cbPostProcessingAttribs : register( b0 )
 {
@@ -87,21 +46,20 @@ cbuffer cbMiscDynamicParams : register( b4 )
 
 Texture2D<float>  g_tex2DDepthBuffer            : register( t0 );
 Texture2D<float>  g_tex2DCamSpaceZ              : register( t0 );
-Texture2D<float4> g_tex2DSliceEndPoints         : register( t4 );
 Texture2D<float2> g_tex2DCoordinates            : register( t1 );
 Texture2D<float>  g_tex2DEpipolarCamSpaceZ      : register( t2 );
+Texture2D<float4> g_tex2DEpipolarSampleWorldPos : register( t0 );
 Texture2D<uint2>  g_tex2DInterpolationSource    : register( t7 );
 Texture2D<float>  g_tex2DLightSpaceDepthMap     : register( t3 );
-Texture2D<float4> g_tex2DSliceUVDirAndOrigin    : register( t2 );
-Texture2D<MIN_MAX_DATA_FORMAT> g_tex2DMinMaxLightSpaceDepth  : register( t4 );
+Texture2D<float2> g_tex2DSliceUVDirInShadowMap  : register( t2 );
+Texture2D<float2> g_tex2DMinMaxLightSpaceDepth  : register( t4 );
 Texture2D<float4> g_tex2DStainedGlassColorDepth : register( t5 );
 Texture2D<float3> g_tex2DInitialInsctrIrradiance: register( t6 );
 Texture2D<float4> g_tex2DColorBuffer            : register( t1 );
 Texture2D<float3> g_tex2DScatteredColor         : register( t3 );
 Texture2D<float3> g_tex2DDownscaledInsctrRadiance: register( t2 );
-Texture2D<INSCTR_LUT_FORMAT> g_tex2DPrecomputedPointLightInsctr: register( t6 );
 
-float3 ApplyPhaseFunction(in float3 f3InsctrIntegral, in float cosTheta)
+float3 ApplyPhaseFunction(in float3 f3InsctrIntegral, in float3 f3EyeVector)
 {
     //    sun
     //      \
@@ -110,6 +68,8 @@ float3 ApplyPhaseFunction(in float3 f3InsctrIntegral, in float cosTheta)
     //         \theta 
     //          \
     //    
+    // compute cosine of theta angle
+    float cosTheta = dot(f3EyeVector, g_LightAttribs.f4DirectionOnSun.xyz);
     
     // Compute Rayleigh scattering Phase Function
     // According to formula for the Rayleigh Scattering phase function presented in the 
@@ -133,7 +93,7 @@ float3 ApplyPhaseFunction(in float3 f3InsctrIntegral, in float cosTheta)
     float3 f3InscatteredLight = f3InsctrIntegral * 
                                (RayleighScatteringPhaseFunc + fMieScatteringPhaseFunc_HGApprox);
 
-    f3InscatteredLight.rgb *= g_LightAttribs.f4LightColorAndIntensity.w;  
+    f3InscatteredLight.rgb *= g_LightAttribs.f4SunColorAndIntensityAtGround.w;  
     
     return f3InscatteredLight;
 }
@@ -147,50 +107,12 @@ float3 ProjSpaceXYZToWorldSpace(in float3 f3PosPS)
     return ReconstructedPosWS.xyz;
 }
 
-float2 RayConeIntersect(in float3 f3ConeApex, in float3 f3ConeAxis, in float fCosAngle, in float3 f3RayStart, in float3 f3RayDir)
+void GetTracingAttribs(inout float3 f3RayEndPosWS, out float3 f3EyeVector, out float fRayLength)
 {
-    f3RayStart -= f3ConeApex;
-    float a = dot(f3RayDir, f3ConeAxis);
-    float b = dot(f3RayDir, f3RayDir);
-    float c = dot(f3RayStart, f3ConeAxis);
-    float d = dot(f3RayStart, f3RayDir);
-    float e = dot(f3RayStart, f3RayStart);
-    fCosAngle *= fCosAngle;
-    float A = a*a - b*fCosAngle;
-    float B = 2 * ( c*a - d*fCosAngle );
-    float C = c*c - e*fCosAngle;
-    float D = B*B - 4*A*C;
-    if( D > 0 )
-    {
-        D = sqrt(D);
-        float2 t = (-B + sign(A)*float2(-D,+D)) / (2*A);
-        bool2 b2IsCorrect = c + a * t > 0;
-        t = t * b2IsCorrect + !b2IsCorrect * (-FLT_MAX);
-        return t;
-    }
-    else
-        return -FLT_MAX;
-}
-
-bool PlanePlaneIntersect(float3 f3N1, float3 f3P1, float3 f3N2, float3 f3P2,
-                         out float3 f3LineOrigin, out float3 f3LineDir)
-{
-    // http://paulbourke.net/geometry/planeplane/
-    float fd1 = dot(f3N1, f3P1);
-    float fd2 = dot(f3N2, f3P2);
-    float fN1N1 = dot(f3N1, f3N1);
-    float fN2N2 = dot(f3N2, f3N2);
-    float fN1N2 = dot(f3N1, f3N2);
-
-    float fDet = fN1N1 * fN2N2 - fN1N2*fN1N2;
-    if( abs(fDet) < 1e-6 )
-        return false;
-
-    float fc1 = (fd1 * fN2N2 - fd2 * fN1N2) / fDet;
-    float fc2 = (fd2 * fN1N1 - fd1 * fN1N2) / fDet;
-
-    f3LineOrigin = fc1 * f3N1 + fc2 * f3N2;
-    f3LineDir = normalize(cross(f3N1, f3N2));
-    
-    return true;
+    f3EyeVector = f3RayEndPosWS.xyz - g_CameraAttribs.f4CameraPos.xyz;
+    fRayLength = length(f3EyeVector);
+    f3EyeVector /= fRayLength;
+    fRayLength = min(fRayLength, g_PPAttribs.m_fMaxTracingDistance);
+    // Update end position
+    f3RayEndPosWS = g_CameraAttribs.f4CameraPos.xyz + fRayLength * f3EyeVector;
 }

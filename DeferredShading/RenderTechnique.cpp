@@ -1,5 +1,5 @@
 //--------------------------------------------------------------------------------------
-// Copyright 2013 Intel Corporation
+// Copyright 2011 Intel Corporation
 // All Rights Reserved
 //
 // Permission is granted to use, copy, distribute and prepare derivative works of this
@@ -86,7 +86,6 @@ HRESULT CRenderTechnique::CreateVertexShaderFromFile(LPCTSTR strFilePath,
 
     HRESULT hr;
     hr = CompileShaderFromFile( strFilePath, strFunctionName, pDefines, "vs_5_0", &pShaderByteCode );
-    if( !pShaderByteCode )hr = E_FAIL;
     if(FAILED(hr))return hr;
 
     m_pVS.Release();
@@ -103,7 +102,6 @@ HRESULT CRenderTechnique::CreateGeometryShaderFromFile(LPCTSTR strFilePath,
 
     HRESULT hr;
     hr = CompileShaderFromFile( strFilePath, strFunctionName, pDefines, "gs_5_0", &pShaderByteCode );
-    if( !pShaderByteCode )hr = E_FAIL;
     if(FAILED(hr))return hr;
 
     m_pGS.Release();
@@ -120,7 +118,6 @@ HRESULT CRenderTechnique::CreatePixelShaderFromFile(LPCTSTR strFilePath,
 
     HRESULT hr;
     hr = CompileShaderFromFile( strFilePath, strFunctionName, pDefines, "ps_5_0", &pShaderByteCode );
-    if( !pShaderByteCode )hr = E_FAIL;
     if(FAILED(hr))return hr;
 
     m_pPS.Release();
@@ -137,7 +134,6 @@ HRESULT CRenderTechnique::CreateComputeShaderFromFile(LPCTSTR strFilePath,
 
     HRESULT hr;
     hr = CompileShaderFromFile( strFilePath, strFunctionName, pDefines, "cs_5_0", &pShaderByteCode );
-    if( !pShaderByteCode )hr = E_FAIL;
     if(FAILED(hr))return hr;
 
     m_pCS.Release();
@@ -152,7 +148,7 @@ HRESULT CRenderTechnique::CreateVGPShadersFromFile(LPCTSTR strFilePath,
                                                     LPSTR strPSFunctionName, 
                                                     const D3D_SHADER_MACRO* pDefines)
 {
-    HRESULT hr = S_OK;
+    HRESULT hr;
     if( strVSFunctionName )
     {
         hr = CreateVertexShaderFromFile(strFilePath, strVSFunctionName, pDefines);

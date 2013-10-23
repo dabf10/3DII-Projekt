@@ -1,5 +1,5 @@
 //--------------------------------------------------------------------------------------
-// Copyright 2013 Intel Corporation
+// Copyright 2011 Intel Corporation
 // All Rights Reserved
 //
 // Permission is granted to use, copy, distribute and prepare derivative works of this
@@ -101,7 +101,7 @@ void RefineSampleLocationsCS(uint3 Gid  : SV_GroupID,
     // are required to perform ray marching
     uint uiInitialSample0GlobalInd = uiInitialSample0Ind + uiGroupStartGlobalInd;
     float2 f2InitialSample0Coords = g_tex2DCoordinates.Load( uint3(uiInitialSample0GlobalInd, uiSliceInd, 0) );
-    if( uiInitialSample0GlobalInd/(float)MAX_SAMPLES_IN_SLICE < 0.1 && 
+    if( uiInitialSample0GlobalInd/g_PPAttribs.m_f2CoordinateTexDim.x < 0.1 && 
         length(f2InitialSample0Coords - g_LightAttribs.f4LightScreenPos.xy) < 0.3 )
     {
         uiInitialSampleStep = max( INITIAL_SAMPLE_STEP / g_PPAttribs.m_uiEpipoleSamplingDensityFactor, 1 );

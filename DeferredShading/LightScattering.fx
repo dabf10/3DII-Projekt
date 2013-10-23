@@ -1,5 +1,5 @@
 //--------------------------------------------------------------------------------------
-// Copyright 2013 Intel Corporation
+// Copyright 2011 Intel Corporation
 // All Rights Reserved
 //
 // Permission is granted to use, copy, distribute and prepare derivative works of this
@@ -24,16 +24,11 @@
 #   define OPTIMIZE_SAMPLE_LOCATIONS 1
 #endif
 
-#ifndef LIGHT_TYPE
-#   define LIGHT_TYPE LIGHT_TYPE_POINT
-#endif
-
-#ifndef ANISOTROPIC_PHASE_FUNCTION
-#   define ANISOTROPIC_PHASE_FUNCTION 1
+#ifndef REFINE_INSCTR_INTEGRAL
+#   define REFINE_INSCTR_INTEGRAL 1
 #endif
 
 #define SHADOW_MAP_DEPTH_BIAS 1e-4
-
 //--------------------------------------------------------------------------------------
 // Texture samplers
 //--------------------------------------------------------------------------------------
@@ -52,6 +47,13 @@ SamplerState samLinearBorder0 : register( s1 )
     AddressV = Border;
     BorderColor = float4(0.0, 0.0, 0.0, 0.0);
 };
+
+//SamplerState samPointClamp
+//{
+//    Filter = MIN_MAG_MIP_POINT;
+//    AddressU = CLAMP;
+//    AddressV = CLAMP;
+//};
 
 SamplerState samLinearUClampVWrap : register( s2 )
 {
@@ -140,32 +142,6 @@ float GetCamSpaceZ(in float2 ScreenSpaceUV)
     return g_tex2DCamSpaceZ.SampleLevel(samLinearClamp, ScreenSpaceUV, 0);
 }
 
-float3 ToneMap(in float3 f3Color)
-{
-    float fExposure = g_PPAttribs.m_fExposure;
-    return 1.0 - exp(-fExposure * f3Color);
-}
-
-float3 ProjSpaceXYToWorldSpace(in float2 f2PosPS)
-{
-    // We can sample camera space z texture using bilinear filtering
-    float fCamSpaceZ = g_tex2DCamSpaceZ.SampleLevel(samLinearClamp, ProjToUV(f2PosPS), 0);
-    return ProjSpaceXYZToWorldSpace(float3(f2PosPS, fCamSpaceZ));
-}
-
-float4 WorldSpaceToShadowMapUV(in float3 f3PosWS)
-{
-    float4 f4LightProjSpacePos = mul( float4(f3PosWS, 1), g_LightAttribs.mWorldToLightProjSpace );
-    f4LightProjSpacePos.xyz /= f4LightProjSpacePos.w;
-    float4 f4UVAndDepthInLightSpace;
-    f4UVAndDepthInLightSpace.xy = ProjToUV( f4LightProjSpacePos.xy );
-    // Applying depth bias results in light leaking through the opaque objects when looking directly
-    // at the light source
-    f4UVAndDepthInLightSpace.z = f4LightProjSpacePos.z;// * g_DepthBiasMultiplier;
-    f4UVAndDepthInLightSpace.w = 1/f4LightProjSpacePos.w;
-    return f4UVAndDepthInLightSpace;
-}
-
 struct SScreenSizeQuadVSOutput
 {
     float4 m_f4Pos : SV_Position;
@@ -183,24 +159,13 @@ SScreenSizeQuadVSOutput GenerateScreenSizeQuadVS(in uint VertexId : SV_VertexID)
         {float4(MinMaxUV.zy, 1.0, 1.0), MinMaxUV.zy},
         {float4(MinMaxUV.zw, 1.0, 1.0), MinMaxUV.zw}
     };
-	
+
     return Verts[VertexId];
-
-	//SScreenSizeQuadVSOutput vert;
-
-	//vert.m_f4Pos.x = (VertexId == 2) ? 3.0f : -1.0f;
-	//vert.m_f4Pos.y = (VertexId == 0) ? -3.0f : 1.0f;
-	//vert.m_f4Pos.zw = 1.0f;
-
-	//vert.m_f2PosPS = vert.m_f4Pos.xy * float2(0.5f, -0.5f) + 0.5f;
-
-	//return vert;
 }
 
 float ReconstructCameraSpaceZPS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     float fDepth = g_tex2DDepthBuffer.Load( uint3(In.m_f4Pos.xy,0) );
-	//float fDepth = g_tex2DDepthBuffer.SampleLevel( samLinearClamp, In.m_f4Pos.xy, 0 );
     float fCamSpaceZ = g_CameraAttribs.mProj[3][2]/(fDepth - g_CameraAttribs.mProj[2][2]);
     return fCamSpaceZ;
 };
@@ -217,28 +182,6 @@ technique11 ReconstructCameraSpaceZ
         SetGeometryShader( NULL );
         SetPixelShader( CompileShader(ps_5_0, ReconstructCameraSpaceZPS() ) );
     }
-}
-
-const float4 GetOutermostScreenPixelCoords()
-{
-    // The outermost visible screen pixels centers do not lie exactly on the boundary (+1 or -1), but are biased by
-    // 0.5 screen pixel size inwards
-    //
-    //                                        2.0
-    //    |<---------------------------------------------------------------------->|
-    //
-    //       2.0/Res
-    //    |<--------->|
-    //    |     X     |      X     |     X     |    ...    |     X     |     X     |
-    //   -1     |                                                            |    +1
-    //          |                                                            |
-    //          |                                                            |
-    //      -1 + 1.0/Res                                                  +1 - 1.0/Res
-    //
-    // Using shader macro is much more efficient than using constant buffer variable
-    // because the compiler is able to optimize the code more aggressively
-    // return float4(-1,-1,1,1) + float4(1, 1, -1, -1)/g_PPAttribs.m_f2ScreenResolution.xyxy;
-    return float4(-1,-1,1,1) + float4(1, 1, -1, -1) / SCREEN_RESLOUTION.xyxy;
 }
 
 // This function computes entry point of the epipolar line given its exit point
@@ -262,7 +205,7 @@ float2 GetEpipolarLineEntryPoint(float2 f2ExitPoint)
     //if( all( abs(g_LightAttribs.f4LightScreenPos.xy) < 1 ) )
     if( g_LightAttribs.bIsLightOnScreen )
     {
-        // If light source is inside the screen, its location is entry point for each epipolar line
+        // If light source is inside the screen its location is entry point for each epipolar line
         f2EntryPoint = g_LightAttribs.f4LightScreenPos.xy;
     }
     else
@@ -270,8 +213,7 @@ float2 GetEpipolarLineEntryPoint(float2 f2ExitPoint)
         // If light source is outside the screen, we need to compute intersection of the ray with
         // the screen boundaries
         
-        // Compute direction from the light source to the exit point
-        // Note that exit point must be located on shrinked screen boundary
+        // Compute direction from the light source to the ray exit point:
         float2 f2RayDir = f2ExitPoint.xy - g_LightAttribs.f4LightScreenPos.xy;
         float fDistToExitBoundary = length(f2RayDir);
         f2RayDir /= fDistToExitBoundary;
@@ -281,13 +223,8 @@ float2 GetEpipolarLineEntryPoint(float2 f2ExitPoint)
         // float fDistToBottomBoundary = abs(f2RayDir.y) > 1e-5 ? (-1 - g_LightAttribs.f4LightScreenPos.y) / f2RayDir.y : -FLT_MAX;
         // float fDistToRightBoundary  = abs(f2RayDir.x) > 1e-5 ? ( 1 - g_LightAttribs.f4LightScreenPos.x) / f2RayDir.x : -FLT_MAX;
         // float fDistToTopBoundary    = abs(f2RayDir.y) > 1e-5 ? ( 1 - g_LightAttribs.f4LightScreenPos.y) / f2RayDir.y : -FLT_MAX;
-        
-        // Note that in fact the outermost visible screen pixels do not lie exactly on the boundary (+1 or -1), but are biased by
-        // 0.5 screen pixel size inwards. Using these adjusted boundaries improves precision and results in
-        // smaller number of pixels which require inscattering correction
-        float4 f4Boundaries = GetOutermostScreenPixelCoords();
         bool4 b4IsCorrectIntersectionFlag = abs(f2RayDir.xyxy) > 1e-5;
-        float4 f4DistToBoundaries = (f4Boundaries - g_LightAttribs.f4LightScreenPos.xyxy) / (f2RayDir.xyxy + !b4IsCorrectIntersectionFlag);
+        float4 f4DistToBoundaries = (float4(-1,-1,1,1) - g_LightAttribs.f4LightScreenPos.xyxy) / (f2RayDir.xyxy + !b4IsCorrectIntersectionFlag);
         // Addition of !b4IsCorrectIntersectionFlag is required to prevent divison by zero
         // Note that such incorrect lanes will be masked out anyway
 
@@ -333,7 +270,14 @@ float2 GetEpipolarLineEntryPoint(float2 f2ExitPoint)
     return f2EntryPoint;
 }
 
-float4 GenerateSliceEndpointsPS(SScreenSizeQuadVSOutput In) : SV_Target
+void GenerateCoordinateTexturePS(SScreenSizeQuadVSOutput In, 
+                                 out float2 f2XY : SV_Target0,
+                                 out float fCamSpaceZ : SV_Target1
+#if REFINE_INSCTR_INTEGRAL
+                                 , out float3 f3WorldSpaceXYZ : SV_Target2
+#endif
+                                 )
+
 {
     float2 f2UV = ProjToUV(In.m_f2PosPS);
 
@@ -341,14 +285,21 @@ float4 GenerateSliceEndpointsPS(SScreenSizeQuadVSOutput In) : SV_Target
     //
     //      0.5     1.5     2.5     3.5
     //   |   X   |   X   |   X   |   X   |     ....       
-    //   0       1       2       3       4   f2UV * TexDim
+    //   0       1       2       3       4   f2UV * g_PPAttribs.m_f2CoordinateTexDim
     //   X - locations where rasterization happens
     //
-    // We need to remove this offset. Also clamp to [0,1] to fix fp32 precision issues
-    float fEpipolarSlice = saturate(f2UV.x - 0.5f / (float)NUM_EPIPOLAR_SLICES);
+    // We need remove this offset:
+    float fSamplePosOnEpipolarLine = f2UV.x - 0.5f / g_PPAttribs.m_f2CoordinateTexDim.x;
+    // Clamp to [0,1] to fix fp32 precision issues
+    float fEpipolarSlice = saturate(f2UV.y - 0.5f / g_PPAttribs.m_f2CoordinateTexDim.y);
 
-    // fEpipolarSlice now lies in the range [0, 1 - 1/NUM_EPIPOLAR_SLICES]
-    // 0 defines location in exacatly left top corner, 1 - 1/NUM_EPIPOLAR_SLICES defines
+    // fSamplePosOnEpipolarLine is now in the range [0, 1 - 1/g_PPAttribs.m_f2CoordinateTexDim.x]
+    // We need to rescale it to be in [0, 1]
+    fSamplePosOnEpipolarLine *= g_PPAttribs.m_f2CoordinateTexDim.x / (g_PPAttribs.m_f2CoordinateTexDim.x-1);
+    fSamplePosOnEpipolarLine = saturate(fSamplePosOnEpipolarLine);
+
+    // fEpipolarSlice lies in the range [0, 1 - 1/g_PPAttribs.m_f2CoordinateTexDim.y]
+    // 0 defines location in exacatly left top corner, 1 - 1/g_PPAttribs.m_f2CoordinateTexDim.y defines
     // position on the top boundary next to the top left corner
     uint uiBoundary = clamp(floor( fEpipolarSlice * 4 ), 0, 3);
     float fPosOnBoundary = frac( fEpipolarSlice * 4 );
@@ -364,83 +315,41 @@ float4 GenerateSliceEndpointsPS(SScreenSizeQuadVSOutput In) : SV_Target
     //
     //         -1          +1
     //
-
-    //                                   Left             Bottom           Right              Top   
-    float4 f4BoundaryXPos = float4(               0, fPosOnBoundary,                1, 1-fPosOnBoundary);
-    float4 f4BoundaryYPos = float4( 1-fPosOnBoundary,              0,  fPosOnBoundary,                1);
-    bool4 b4BoundaryFlags = bool4( uiBoundary.xxxx == uint4(0,1,2,3) );
+    float fBoundaryCoord = -1 + 2*fPosOnBoundary;
+    //                                   Left             Bttom           Right              Top   
+    float4 f4BoundaryXCoord = float4(             -1, fBoundaryCoord,              1, -fBoundaryCoord);
+    float4 f4BoundaryYCoord = float4(-fBoundaryCoord,             -1, fBoundaryCoord,               1);
+    bool4 b4BoundaryFlags = bool4(uiBoundary.xxxx == uint4(0,1,2,3));
     // Select the right coordinates for the boundary
-    float2 f2ExitPointPosOnBnd = float2( dot(f4BoundaryXPos, b4BoundaryFlags), dot(f4BoundaryYPos, b4BoundaryFlags) );
-    // Note that in fact the outermost visible screen pixels do not lie exactly on the boundary (+1 or -1), but are biased by
-    // 0.5 screen pixel size inwards. Using these adjusted boundaries improves precision and results in
-    // samller number of pixels which require inscattering correction
-    float4 f4OutermostScreenPixelCoords = GetOutermostScreenPixelCoords();// xyzw = (left, bottom, right, top)
-    float2 f2ExitPoint = lerp(f4OutermostScreenPixelCoords.xy, f4OutermostScreenPixelCoords.zw, f2ExitPointPosOnBnd);
-    // GetEpipolarLineEntryPoint() gets exit point on SHRINKED boundary
+    float2 f2ExitPoint = float2(dot(f4BoundaryXCoord, b4BoundaryFlags), dot(f4BoundaryYCoord, b4BoundaryFlags));
     float2 f2EntryPoint = GetEpipolarLineEntryPoint(f2ExitPoint);
-
-#if OPTIMIZE_SAMPLE_LOCATIONS
-    // If epipolar slice is not invisible, advance its exit point if necessary
-    // Recall that all correct entry points are completely inside the [-1,1]x[-1,1] area
-    if( all(abs(f2EntryPoint) < 1) )
+    if( any(abs(f2EntryPoint) > 1+1e-4) )
     {
-        // Compute length of the epipolar line in screen pixels:
-        float fEpipolarSliceScreenLen = length( (f2ExitPoint - f2EntryPoint) * SCREEN_RESLOUTION.xy / 2 );
-        // If epipolar line is too short, update epipolar line exit point to provide 1:1 texel to screen pixel correspondence:
-        f2ExitPoint = f2EntryPoint + (f2ExitPoint - f2EntryPoint) * max((float)MAX_SAMPLES_IN_SLICE / fEpipolarSliceScreenLen, 1);
-    }
-#endif
-
-    return float4(f2EntryPoint, f2ExitPoint);
-}
-
-
-void GenerateCoordinateTexturePS(SScreenSizeQuadVSOutput In, 
-                                 out float2 f2XY : SV_Target0,
-                                 out float fCamSpaceZ : SV_Target1)
-
-{
-    float4 f4SliceEndPoints = g_tex2DSliceEndPoints.Load( int3(In.m_f4Pos.y,0,0) );
-    
-    // If slice entry point is outside [-1,1]x[-1,1] area, the slice is completely invisible
-    // and we can skip it from further processing.
-    // Note that slice exit point can lie outside the screen, if sample locations are optimized
-    // Recall that all correct entry points are completely inside the [-1,1]x[-1,1] area
-    if( any(abs(f4SliceEndPoints.xy) > 1) )
-    {
-        // Discard invalid slices
-        // Such slices will not be marked in the stencil and as a result will always be skipped
+        // Discard invalid rays
+        // Such rays will not be marked in the stencil and as a result will always be skipped
         discard;
     }
 
-    float2 f2UV = ProjToUV(In.m_f2PosPS);
-
-    // Note that due to the rasterization rules, UV coordinates are biased by 0.5 texel size.
-    //
-    //      0.5     1.5     2.5     3.5
-    //   |   X   |   X   |   X   |   X   |     ....       
-    //   0       1       2       3       4   f2UV * f2TexDim
-    //   X - locations where rasterization happens
-    //
-    // We need remove this offset:
-    float fSamplePosOnEpipolarLine = f2UV.x - 0.5f / (float)MAX_SAMPLES_IN_SLICE;
-    // fSamplePosOnEpipolarLine is now in the range [0, 1 - 1/MAX_SAMPLES_IN_SLICE]
-    // We need to rescale it to be in [0, 1]
-    fSamplePosOnEpipolarLine *= (float)MAX_SAMPLES_IN_SLICE / ((float)MAX_SAMPLES_IN_SLICE-1.f);
-    fSamplePosOnEpipolarLine = saturate(fSamplePosOnEpipolarLine);
+#if OPTIMIZE_SAMPLE_LOCATIONS
+    // Compute length of the epipolar line in screen pixels:
+    float fEpipolarSliceScreenLen = length( (f2ExitPoint - f2EntryPoint) * g_PPAttribs.m_f2ScreenResolution.xy / 2 );
+    // If epipolar line is too short, update epipolar line exit point to provide 1:1 texel to screen pixel correspondence:
+    f2ExitPoint = f2EntryPoint + (f2ExitPoint - f2EntryPoint) * max(g_PPAttribs.m_f2CoordinateTexDim.x / fEpipolarSliceScreenLen, 1);
+#endif
 
     // Compute interpolated position between entry and exit points:
-    f2XY = lerp(f4SliceEndPoints.xy, f4SliceEndPoints.zw, fSamplePosOnEpipolarLine);
-    // All correct entry points are completely inside the [-1,1]x[-1,1] area
-    if( any(abs(f2XY) > 1) )
+    f2XY = lerp(f2EntryPoint, f2ExitPoint, fSamplePosOnEpipolarLine);
+    if( any(abs(f2XY) > 1+1e-4) )
     {
         // Discard pixels that fall behind the screen
-        // This can happen if slice exit point was optimized
         discard;
     }
 
     // Compute camera space z for current location
     fCamSpaceZ = GetCamSpaceZ( ProjToUV(f2XY) );
+#if REFINE_INSCTR_INTEGRAL
+    f3WorldSpaceXYZ = ProjSpaceXYZToWorldSpace( float3(f2XY, fCamSpaceZ) );
+#endif
 };
 
 
@@ -459,105 +368,26 @@ technique11 GenerateCoordinateTexture
     }
 }
 
-static const float4 g_f4IncorrectSliceUVDirAndStart = float4(-10000, -10000, 0, 0);
-float4 RenderSliceUVDirInShadowMapTexturePS(SScreenSizeQuadVSOutput In) : SV_Target
+
+
+float2 RenderSliceUVDirInShadowMapTexturePS(SScreenSizeQuadVSOutput In) : SV_Target
 {
+    // Load location of the first sample in the slice (after the light source, which is 0-th sample)
     uint uiSliceInd = In.m_f4Pos.x;
-    // Load epipolar slice endpoints
-    float4 f4SliceEndpoints = g_tex2DSliceEndPoints.Load(  uint3(uiSliceInd,0,0) );
-    // All correct entry points are completely inside the [-1,1]x[-1,1] area
-    if( any( abs(f4SliceEndpoints.xy) > 1 ) )
-        return g_f4IncorrectSliceUVDirAndStart;
+    float2 f2FirstSampleInSliceLocationPS = g_tex2DCoordinates.Load( uint3(1, uiSliceInd, 0) );
+    if( any( abs(f2FirstSampleInSliceLocationPS) > 1 + 1e-4 ) )
+        return float2(-10000, -10000);
 
-    // Reconstruct slice exit point position in world space
-    float3 f3SliceExitWS = ProjSpaceXYToWorldSpace(f4SliceEndpoints.zw);
-    float3 f3DirToSliceExitFromCamera = normalize(f3SliceExitWS - g_CameraAttribs.f4CameraPos.xyz);
-    // Compute epipolar slice normal. If light source is outside the screen, the vectors could be collinear
-    float3 f3SliceNormal = cross(f3DirToSliceExitFromCamera, g_LightAttribs.f4DirOnLight.xyz);
-    if( length(f3SliceNormal) < 1e-5 )
-        return g_f4IncorrectSliceUVDirAndStart;
-    f3SliceNormal = normalize(f3SliceNormal);
+    // Reproject the sample location from camera projection space to light space
+    float4 f4FirstSampleInSlicePosInLightProjSpace = mul( float4(f2FirstSampleInSliceLocationPS, 0, 1), g_LightAttribs.mCameraProjToLightProjSpace);
+    f4FirstSampleInSlicePosInLightProjSpace /= f4FirstSampleInSlicePosInLightProjSpace.w;
+    float2 f2FirstSampleInSliceUVInShadowMap = ProjToUV( f4FirstSampleInSlicePosInLightProjSpace.xy );
 
-    // Intersect epipolar slice plane with the light projection plane.
-    float3 f3IntersecOrig, f3IntersecDir;
-
-#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
-    // We can use any plane parallel to the light furstum near clipping plane. The exact distance from the plane
-    // to light source does not matter since the projection will always be the same:
-    float3 f3LightProjPlaneCenter = g_LightAttribs.f4LightWorldPos.xyz + g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz;
-#endif
-    
-    if( !PlanePlaneIntersect( 
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
-                             // In case light is directional, the matrix is not perspective, so location
-                             // of the light projection plane in space as well as camera position do not matter at all
-                             f3SliceNormal, 0,
-                             -g_LightAttribs.f4DirOnLight.xyz, 0,
-#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
-                             f3SliceNormal, g_CameraAttribs.f4CameraPos.xyz,
-                             g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz, f3LightProjPlaneCenter,
-#endif
-                             f3IntersecOrig, f3IntersecDir ) )
-    {
-        // There is no correct intersection between planes in barelly possible case which
-        // requires that:
-        // 1. DirOnLight is exacatly parallel to light projection plane
-        // 2. The slice is parallel to light projection plane
-        return g_f4IncorrectSliceUVDirAndStart;
-    }
-    // Important: ray direction f3IntersecDir is computed as a cross product of 
-    // slice normal and light direction (or spot light axis). As a result, the ray
-    // direction is always correct for valid slices. 
-
-    // Now project the line onto the light space UV coordinates. 
-    // Get two points on the line:
-    float4 f4P0 = float4( f3IntersecOrig, 1 );
-    float4 f4P1 = float4( f3IntersecOrig + f3IntersecDir * max(1, length(f3IntersecOrig)), 1 );
-    // Transform the points into the shadow map UV:
-    f4P0 = mul( f4P0, g_LightAttribs.mWorldToLightProjSpace); 
-    f4P0 /= f4P0.w;
-    f4P1 = mul( f4P1, g_LightAttribs.mWorldToLightProjSpace); 
-    f4P1 /= f4P1.w;
-    // Note that division by w is not really necessary because both points lie in the plane 
-    // parallel to light projection and thus have the same w value.
-    float2 f2SliceDir = ProjToUV(f4P1.xy) - ProjToUV(f4P0.xy);
-    
-    // The following method also works:
-    // Since we need direction only, we can use any origin. The most convinient is
-    // f3LightProjPlaneCenter which projects into (0.5,0.5):
-    //float4 f4SliceUVDir = mul( float4(f3LightProjPlaneCenter + f3IntersecDir, 1), g_LightAttribs.mWorldToLightProjSpace);
-    //f4SliceUVDir /= f4SliceUVDir.w;
-    //float2 f2SliceDir = ProjToUV(f4SliceUVDir.xy) - 0.5;
-
+    // Compute direction from the camera pos in light space to the sample pos
+    float2 f2SliceDir = f2FirstSampleInSliceUVInShadowMap - g_LightAttribs.f4CameraUVAndDepthInShadowMap.xy;
     f2SliceDir /= max(abs(f2SliceDir.x), abs(f2SliceDir.y));
-
-    float2 f2SliceOriginUV = g_LightAttribs.f4CameraUVAndDepthInShadowMap.xy;
     
-#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
-    bool bIsCamInsideCone = dot( -g_LightAttribs.f4DirOnLight.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz) > g_LightAttribs.f4SpotLightAxisAndCosAngle.w;
-    if( !bIsCamInsideCone )
-    {
-        // If camera is outside the cone, all the rays in slice hit the same cone side, which means that they
-        // all start from projection of this rib onto the shadow map
-
-        // Intesect the ray with the light cone:
-        float2 f2ConeIsecs = 
-            RayConeIntersect(g_LightAttribs.f4LightWorldPos.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.w,
-                             f3IntersecOrig, f3IntersecDir);
-        
-        if( any(f2ConeIsecs == -FLT_MAX) )
-            return g_f4IncorrectSliceUVDirAndStart;
-        // Now select the first intersection with the cone along the ray
-        float4 f4RayConeIsec = float4( f3IntersecOrig + min(f2ConeIsecs.x, f2ConeIsecs.y) * f3IntersecDir, 1 );
-        // Project this intersection:
-        f4RayConeIsec = mul( f4RayConeIsec, g_LightAttribs.mWorldToLightProjSpace);
-        f4RayConeIsec /= f4RayConeIsec.w;
-
-        f2SliceOriginUV = ProjToUV(f4RayConeIsec.xy);
-    }
-#endif
-
-    return float4(f2SliceDir, f2SliceOriginUV);
+    return f2SliceDir;
 }
 
 technique11 RenderSliceUVDirInShadowMapTexture
@@ -577,25 +407,23 @@ technique11 RenderSliceUVDirInShadowMapTexture
 
 // Note that min/max shadow map does not contain finest resolution level
 // The first level it contains corresponds to step == 2
-MIN_MAX_DATA_FORMAT InitializeMinMaxShadowMapPS(SScreenSizeQuadVSOutput In) : SV_Target
+float2 InitializeMinMaxShadowMapPS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     uint uiSliceInd = In.m_f4Pos.y;
     // Load slice direction in shadow map
-    float4 f4SliceUVDirAndOrigin = g_tex2DSliceUVDirAndOrigin.Load( uint3(uiSliceInd,0,0) );
+    float2 f2SliceDir = g_tex2DSliceUVDirInShadowMap.Load( uint3(uiSliceInd,0,0) );
     // Calculate current sample position on the ray
-    float2 f2CurrUV = f4SliceUVDirAndOrigin.zw + f4SliceUVDirAndOrigin.xy * floor(In.m_f4Pos.x) * 2.f * g_PPAttribs.m_f2ShadowMapTexelSize;
+    float2 f2CurrUV = g_LightAttribs.f4CameraUVAndDepthInShadowMap.xy + f2SliceDir * floor(In.m_f4Pos.x) * 2.f * g_PPAttribs.m_f2ShadowMapTexelSize;
     
     // Gather 8 depths which will be used for PCF filtering for this sample and its immediate neighbor 
     // along the epipolar slice
     // Note that if the sample is located outside the shadow map, Gather() will return 0 as 
     // specified by the samLinearBorder0. As a result volumes outside the shadow map will always be lit
-    float4 f4Depths = g_tex2DLightSpaceDepthMap.Gather(samLinearBorder0, f2CurrUV);
+    float4 f4Depths = 1 - g_tex2DLightSpaceDepthMap.Gather(samLinearBorder0, f2CurrUV);
     // Shift UV to the next sample along the epipolar slice:
-    f2CurrUV += f4SliceUVDirAndOrigin.xy * g_PPAttribs.m_f2ShadowMapTexelSize;
-    float4 f4NeighbDepths = g_tex2DLightSpaceDepthMap.Gather(samLinearBorder0, f2CurrUV);
+    f2CurrUV += f2SliceDir * g_PPAttribs.m_f2ShadowMapTexelSize;
+    float4 f4NeighbDepths = 1 - g_tex2DLightSpaceDepthMap.Gather(samLinearBorder0, f2CurrUV);
 
-#if ACCEL_STRUCT == ACCEL_STRUCT_MIN_MAX_TREE
-    
     float4 f4MinDepth = min(f4Depths, f4NeighbDepths);
     f4MinDepth.xy = min(f4MinDepth.xy, f4MinDepth.zw);
     f4MinDepth.x = min(f4MinDepth.x, f4MinDepth.y);
@@ -605,22 +433,6 @@ MIN_MAX_DATA_FORMAT InitializeMinMaxShadowMapPS(SScreenSizeQuadVSOutput In) : SV
     f4MaxDepth.x = max(f4MaxDepth.x, f4MaxDepth.y);
 
     return float2(f4MinDepth.x, f4MaxDepth.x);
-
-#elif ACCEL_STRUCT == ACCEL_STRUCT_BV_TREE
-    
-    // Calculate min/max depths for current and next sampling locations
-    float2 f2MinDepth = min(f4Depths.xy, f4Depths.zw);
-    float fMinDepth = min(f2MinDepth.x, f2MinDepth.y);
-    float2 f2MaxDepth = max(f4Depths.xy, f4Depths.zw);
-    float fMaxDepth = max(f2MaxDepth.x, f2MaxDepth.y);
-    float2 f2NeighbMinDepth = min(f4NeighbDepths.xy, f4NeighbDepths.zw);
-    float fNeighbMinDepth = min(f2NeighbMinDepth.x, f2NeighbMinDepth.y);
-    float2 f2NeighbMaxDepth = max(f4NeighbDepths.xy, f4NeighbDepths.zw);
-    float fNeighbMaxDepth = max(f2NeighbMaxDepth.x, f2NeighbMaxDepth.y);
-
-    return float4( fMinDepth, fMaxDepth, fNeighbMinDepth, fNeighbMaxDepth );
-
-#endif
 }
 
 // 1D min max mip map is arranged as follows:
@@ -639,65 +451,17 @@ MIN_MAX_DATA_FORMAT InitializeMinMaxShadowMapPS(SScreenSizeQuadVSOutput In) : SV
 //         |    uiMinMaxShadowMapResolution/
 //      uiMinMaxShadowMapResolution/2
 //                         
-MIN_MAX_DATA_FORMAT ComputeMinMaxShadowMapLevelPS(SScreenSizeQuadVSOutput In) : SV_Target
+float2 ComputeMinMaxShadowMapLevelPS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     uint2 uiDstSampleInd = uint2(In.m_f4Pos.xy);
     uint2 uiSrcSample0Ind = uint2(g_MiscParams.ui4SrcDstMinMaxLevelOffset.x + (uiDstSampleInd.x - g_MiscParams.ui4SrcDstMinMaxLevelOffset.z)*2, uiDstSampleInd.y);
     uint2 uiSrcSample1Ind = uiSrcSample0Ind + uint2(1,0);
-    MIN_MAX_DATA_FORMAT fnMinMaxDepth0 = g_tex2DMinMaxLightSpaceDepth.Load( uint3(uiSrcSample0Ind,0) );
-    MIN_MAX_DATA_FORMAT fnMinMaxDepth1 = g_tex2DMinMaxLightSpaceDepth.Load( uint3(uiSrcSample1Ind,0) );
-#if ACCEL_STRUCT == ACCEL_STRUCT_MIN_MAX_TREE
+    float2 f2MinMaxDepth0 = 1 - g_tex2DMinMaxLightSpaceDepth.Load( uint3(uiSrcSample0Ind,0) );
+    float2 f2MinMaxDepth1 = 1 - g_tex2DMinMaxLightSpaceDepth.Load( uint3(uiSrcSample1Ind,0) );
     float2 f2MinMaxDepth;
-    f2MinMaxDepth.x = min(fnMinMaxDepth0.x, fnMinMaxDepth1.x);
-    f2MinMaxDepth.y = max(fnMinMaxDepth0.y, fnMinMaxDepth1.y);
+    f2MinMaxDepth.x = min(f2MinMaxDepth0.x, f2MinMaxDepth1.x);
+    f2MinMaxDepth.y = max(f2MinMaxDepth0.y, f2MinMaxDepth1.y);
     return f2MinMaxDepth;
-#elif ACCEL_STRUCT == ACCEL_STRUCT_BV_TREE
-
-    float4 f4MinMaxDepth;
-    //
-    //                fnMinMaxDepth0.z        fnMinMaxDepth1.z
-    //                      *                       *
-    //                                 *
-    //           *              fnMinMaxDepth1.x
-    //  fnMinMaxDepth0.x
-    // Start by drawing line from the first to the last points:
-    f4MinMaxDepth.x = fnMinMaxDepth0.x;
-    f4MinMaxDepth.z = fnMinMaxDepth1.z;
-    // Check if second and first points are above the line and update its ends if required 
-    float fDelta = lerp(f4MinMaxDepth.x, f4MinMaxDepth.z, 1.f/3.f) - fnMinMaxDepth0.z;
-    f4MinMaxDepth.x -= 3.f/2.f * max(fDelta, 0);
-    fDelta = lerp(f4MinMaxDepth.x, f4MinMaxDepth.z, 2.f/3.f) - fnMinMaxDepth1.x;
-    f4MinMaxDepth.z -= 3.f/2.f * max(fDelta, 0);
-
-    //
-    //                fnMinMaxDepth0.w        fnMinMaxDepth1.w
-    //                      *                       *
-    //                                 *
-    //           *              fnMinMaxDepth1.y
-    //  fnMinMaxDepth0.y  
-    f4MinMaxDepth.y = fnMinMaxDepth0.y;
-    f4MinMaxDepth.w = fnMinMaxDepth1.w;
-    fDelta = fnMinMaxDepth0.w - lerp(f4MinMaxDepth.y, f4MinMaxDepth.w, 1.f/3.f);
-    f4MinMaxDepth.y += 3.f/2.f * max(fDelta, 0);
-    fDelta = fnMinMaxDepth1.y - lerp(f4MinMaxDepth.y, f4MinMaxDepth.w, 2.f/3.f);
-    f4MinMaxDepth.w += 3.f/2.f * max(fDelta, 0);
-    
-    // Check if the horizontal bounding box is better
-    float2 f2MaxDepth = max(fnMinMaxDepth0.yw, fnMinMaxDepth1.yw);
-    float fMaxDepth = max(f2MaxDepth.x, f2MaxDepth.y);
-
-    float2 f2MinDepth = min(fnMinMaxDepth0.xz, fnMinMaxDepth1.xz);
-    float fMinDepth = min(f2MinDepth.x, f2MinDepth.y);
-
-    float fThreshold = (fMaxDepth-fMinDepth) * 0.01;
-    if( any(f4MinMaxDepth.yw > fMaxDepth + fThreshold) )
-        f4MinMaxDepth.yw = fMaxDepth;
-
-    if( any(f4MinMaxDepth.xz < fMinDepth - fThreshold) )
-        f4MinMaxDepth.xz = fMinDepth;
-
-    return f4MinMaxDepth;
-#endif
 }
 
 technique11 BuildMinMaxMipMap
@@ -751,6 +515,60 @@ technique11 MarkRayMarchingSamplesInStencil
     }
 }
 
+float3 ProjSpaceXYToWorldSpace(in float2 f2PosPS)
+{
+    // We can sample camera space z texture using bilinear filtering
+    float fCamSpaceZ = g_tex2DCamSpaceZ.SampleLevel(samLinearClamp, ProjToUV(f2PosPS), 0);
+    return ProjSpaceXYZToWorldSpace(float3(f2PosPS, fCamSpaceZ));
+}
+
+float3 WorldSpaceToShadowMapUV(in float3 f3PosWS)
+{
+    float4 f4LightProjSpacePos = mul( float4(f3PosWS, 1), g_LightAttribs.mWorldToLightProjSpace );
+    f4LightProjSpacePos /= f4LightProjSpacePos.w;
+    float3 f3UVAndDepthInLightSpace;
+    f3UVAndDepthInLightSpace.xy = ProjToUV( f4LightProjSpacePos.xy );
+    // Applying depth bias results in light leaking through the opaque objects when looking directly
+    // at the light source
+    f3UVAndDepthInLightSpace.z = f4LightProjSpacePos.z;// * g_DepthBiasMultiplier;
+    return f3UVAndDepthInLightSpace;
+}
+
+float3 CalculateCoarseInsctrIntergal(in float fStartDistFromCamera, 
+                                     in float fEndDistFromCamera,
+                                     in float3 f3EyeVec)
+{
+    // Perform coarse inscattering integral calculation using fixed number of steps
+    float3 f3StartUVAndDepthInLightSpace = WorldSpaceToShadowMapUV(g_CameraAttribs.f4CameraPos.xyz + f3EyeVec * fStartDistFromCamera);
+    float3 f3EndUVAndDepthInLightSpace = WorldSpaceToShadowMapUV(g_CameraAttribs.f4CameraPos.xyz + f3EyeVec * fEndDistFromCamera);
+    f3StartUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
+    f3EndUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
+
+    static const float fShadowMapSteps = 4.f;
+    float3 f3PrevInsctrIntegral = -exp( -fStartDistFromCamera * g_MediaParams.f4SummTotalBeta.rgb );
+    float3 f3InsctrIntegralDelta = 0;
+    [unroll]
+    for(float fPos = 0.5/fShadowMapSteps; fPos < 1; fPos += 1.f/fShadowMapSteps )
+    {
+        float3 f3CurrUVAndDepthInLightSpace = lerp(f3StartUVAndDepthInLightSpace, f3EndUVAndDepthInLightSpace, fPos);
+        float fCurrDepthInLightSpace = max(f3CurrUVAndDepthInLightSpace.z - 1e-4, 1e-7);
+        float fIsInLight = 1 - g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, f3CurrUVAndDepthInLightSpace.xy, fCurrDepthInLightSpace ).x;
+        float fCurrDist = lerp(fStartDistFromCamera, fEndDistFromCamera, fPos + 0.5f/fShadowMapSteps);
+        float3 f3InsctrIntegral = -exp( -fCurrDist * g_MediaParams.f4SummTotalBeta.rgb );
+        float3 dSctrIntegral = (f3InsctrIntegral - f3PrevInsctrIntegral) * fIsInLight;
+#if STAINED_GLASS
+            float4 SGWColor = g_tex2DStainedGlassColorDepth.SampleLevel( samLinearClamp, f3CurrUVAndDepthInLightSpace.xy, 0).rgba;
+            float3 f3LightColorInCurrPoint = ((SGWColor.a < fCurrDepthInLightSpace) ? float3(1,1,1) : SGWColor.rgb*3);
+            dSctrIntegral *= f3LightColorInCurrPoint;
+#endif
+        f3InsctrIntegralDelta += dSctrIntegral;
+        f3PrevInsctrIntegral = f3InsctrIntegral;
+    }
+    f3InsctrIntegralDelta /= g_MediaParams.f4SummTotalBeta.rgb;
+
+    return f3InsctrIntegralDelta;
+}
+
 float3 InterpolateIrradiancePS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     uint uiSampleInd = In.m_f4Pos.x;
@@ -761,6 +579,23 @@ float3 InterpolateIrradiancePS(SScreenSizeQuadVSOutput In) : SV_Target
 
     float3 f3Src0 = g_tex2DInitialInsctrIrradiance.Load( uint3(ui2InterpolationSources.x, uiSliceInd, 0) );
     float3 f3Src1 = g_tex2DInitialInsctrIrradiance.Load( uint3(ui2InterpolationSources.y, uiSliceInd, 0));
+
+#if REFINE_INSCTR_INTEGRAL
+    float3 f3SamplePosWS = g_tex2DEpipolarSampleWorldPos.Load( uint3(uiSampleInd, uiSliceInd,0) ).xyz;
+    float3 f3SrcSample0PosWS = g_tex2DEpipolarSampleWorldPos.Load( uint3(ui2InterpolationSources.x, uiSliceInd,0) ).xyz;
+    float3 f3SrcSample1PosWS = g_tex2DEpipolarSampleWorldPos.Load( uint3(ui2InterpolationSources.y, uiSliceInd,0) ).xyz;
+    
+
+    float3 f3EyeVec, f3Src0EyeVec, f3Src1EyeVec;
+    float fRayLength, fSrc0RayLength, fSrc1RayLength;
+    GetTracingAttribs(f3SamplePosWS, f3EyeVec, fRayLength);
+    GetTracingAttribs(f3SrcSample0PosWS, f3Src0EyeVec, fSrc0RayLength);
+    GetTracingAttribs(f3SrcSample1PosWS, f3Src1EyeVec, fSrc1RayLength);
+
+    // Refine source integrals
+    f3Src0 = max( f3Src0 + CalculateCoarseInsctrIntergal(fSrc0RayLength, fRayLength, f3EyeVec), 0 ); 
+    f3Src1 = max( f3Src1 + CalculateCoarseInsctrIntergal(fSrc1RayLength, fRayLength, f3EyeVec), 0 ); 
+#endif
 
     // Ray marching samples are interpolated from themselves
     return lerp(f3Src0, f3Src1, fInterpolationPos);
@@ -881,11 +716,7 @@ float3 UnwarpEpipolarInsctrImage( SScreenSizeQuadVSOutput In, in float fCamSpace
     //bool hs1 = (In.m_f2PosPS.x -  (1)) * f2RayDir.y < f2RayDir.x * (In.m_f2PosPS.y - (-1));
     //bool hs2 = (In.m_f2PosPS.x -  (1)) * f2RayDir.y < f2RayDir.x * (In.m_f2PosPS.y -  (1));
     //bool hs3 = (In.m_f2PosPS.x - (-1)) * f2RayDir.y < f2RayDir.x * (In.m_f2PosPS.y -  (1));
-    // Note that in fact the outermost visible screen pixels do not lie exactly on the boundary (+1 or -1), but are biased by
-    // 0.5 screen pixel size inwards. Using these adjusted boundaries improves precision and results in
-    // smaller number of pixels which require inscattering correction
-    float4 f4Boundaries = GetOutermostScreenPixelCoords();//left, bottom, right, top
-    float4 f4HalfSpaceEquationTerms = (In.m_f2PosPS.xxyy - f4Boundaries.xzyw/*float4(-1,1,-1,1)*/) * f2RayDir.yyxx;
+    float4 f4HalfSpaceEquationTerms = (In.m_f2PosPS.xxyy - float4(-1,1,-1,1)) * f2RayDir.yyxx;
     bool4 b4HalfSpaceFlags = f4HalfSpaceEquationTerms.xyyx < f4HalfSpaceEquationTerms.zzww;
 
     // Now compute mask indicating which of four sectors the f2RayDir belongs to and consiquently
@@ -907,52 +738,42 @@ float3 UnwarpEpipolarInsctrImage( SScreenSizeQuadVSOutput In, in float fCamSpace
     //float fDistToBottomBoundary = abs(f2RayDir.y) > 1e-5 ? ( -1 - g_LightAttribs.f4LightScreenPos.y) / f2RayDir.y : -FLT_MAX;
     //float fDistToRightBoundary  = abs(f2RayDir.x) > 1e-5 ? (  1 - g_LightAttribs.f4LightScreenPos.x) / f2RayDir.x : -FLT_MAX;
     //float fDistToTopBoundary    = abs(f2RayDir.y) > 1e-5 ? (  1 - g_LightAttribs.f4LightScreenPos.y) / f2RayDir.y : -FLT_MAX;
-    float4 f4DistToBoundaries = ( f4Boundaries - g_LightAttribs.f4LightScreenPos.xyxy ) / (f2RayDir.xyxy + float4( abs(f2RayDir.xyxy)<1e-6 ) );
+    float4 f4DistToBoundaries = ( float4(-1,-1, 1,1) - g_LightAttribs.f4LightScreenPos.xyxy ) / (f2RayDir.xyxy + float4( abs(f2RayDir.xyxy)<1e-6 ) );
     // Select distance to the exit boundary:
     float fDistToExitBoundary = dot( b4SectorFlags, f4DistToBoundaries );
     // Compute exit point on the boundary:
     float2 f2ExitPoint = g_LightAttribs.f4LightScreenPos.xy + f2RayDir * fDistToExitBoundary;
-
+    float2 f2EntryPoint = GetEpipolarLineEntryPoint(f2ExitPoint);
     // Compute epipolar slice for each boundary:
     //if( LeftBoundary )
-    //    fEpipolarSlice = 0.0  - (LeftBoudaryIntersecPoint.y   -   1 )/2 /4;
+    //    fEpipolarSlice = 0.0 + (0.5 - 0.5*LeftBoudaryIntersecPoint.y)/4;
     //else if( BottomBoundary )
-    //    fEpipolarSlice = 0.25 + (BottomBoudaryIntersecPoint.x - (-1))/2 /4;
+    //    fEpipolarSlice = 0.25 + (0.5*BottomBoudaryIntersecPoint.x + 0.5)/4;
     //else if( RightBoundary )
-    //    fEpipolarSlice = 0.5  + (RightBoudaryIntersecPoint.y  - (-1))/2 /4;
+    //    fEpipolarSlice = 0.5 + (0.5 + 0.5*RightBoudaryIntersecPoint.y)/4;
     //else if( TopBoundary )
-    //    fEpipolarSlice = 0.75 - (TopBoudaryIntersecPoint.x      - 1 )/2 /4;
-    float4 f4EpipolarSlice = float4(0, 0.25, 0.5, 0.75) + 
-        saturate( (f2ExitPoint.yxyx - f4Boundaries.wxyz)*float4(-1, +1, +1, -1) / (f4Boundaries.wzwz - f4Boundaries.yxyx) ) / 4.0;
+    //    fEpipolarSlice = 0.75 + (0.5 - 0.5*TopBoudaryIntersecPoint.x)/4;
+    float4 f4EpipolarSlice = float4(0, 0.25, 0.5, 0.75) + (0.5 + float4(-0.5, +0.5, +0.5, -0.5)*f2ExitPoint.yxyx)/4.0;
     // Select the right value:
     float fEpipolarSlice = dot(b4SectorFlags, f4EpipolarSlice);
 
-    // Load epipolar endpoints. Note that slice 0 is stored in the first
-    // texel which has U coordinate shifted by 0.5 texel size
-    // (search for "fEpipolarSlice = saturate(f2UV.x - 0.5f / (float)NUM_EPIPOLAR_SLICES)"):
-    fEpipolarSlice = saturate(fEpipolarSlice + 0.5f/(float)NUM_EPIPOLAR_SLICES);
-    // Note also that this offset dramatically reduces the number of samples, for which correction pass is
-    // required (the correction pass becomes more than 2x times faster!!!)
-    float4 f4SliceEndpoints = g_tex2DSliceEndPoints.SampleLevel( samLinearClamp, float2(fEpipolarSlice, 0.5), 0 );
-    f2ExitPoint = f4SliceEndpoints.zw;
-    float2 f2EntryPoint = f4SliceEndpoints.xy;
+#if OPTIMIZE_SAMPLE_LOCATIONS
+    // Compute length of the epipolar line in screen pixels:
+    float fEpipolarSliceScreenLen = length( (f2ExitPoint - f2EntryPoint) * g_PPAttribs.m_f2ScreenResolution.xy / 2 );
+    // If epipolar line is too short, update epipolar line exit point to provide 1:1 texel to screen pixel correspondence:
+    f2ExitPoint = f2EntryPoint + (f2ExitPoint - f2EntryPoint) * max(g_PPAttribs.m_f2CoordinateTexDim.x / fEpipolarSliceScreenLen, 1);
+#endif
 
-
-    float2 f2EpipolarSliceDir = f2ExitPoint - f2EntryPoint;
+    float2 f2EpipolarSliceDir = f2ExitPoint - f2EntryPoint.xy;
     float fEpipolarSliceLen = length(f2EpipolarSliceDir);
     f2EpipolarSliceDir /= max(fEpipolarSliceLen, 1e-6);
 
     // Project current pixel onto the epipolar slice
-    float fSamplePosOnEpipolarLine = dot((In.m_f2PosPS - f2EntryPoint.xy), f2EpipolarSliceDir) / fEpipolarSliceLen;
-    // Rescale the sample position
-    // Note that the first sample on slice is exactly the f2EntryPoint.xy, while the last sample is exactly the f2ExitPoint
-    // (search for "fSamplePosOnEpipolarLine *= (float)MAX_SAMPLES_IN_SLICE / ((float)MAX_SAMPLES_IN_SLICE-1.f)")
-    // As usual, we also need to add offset by 0.5 texel size
-    float fScatteredColorU = fSamplePosOnEpipolarLine * ((float)MAX_SAMPLES_IN_SLICE-1) / (float)MAX_SAMPLES_IN_SLICE + 0.5f/(float)MAX_SAMPLES_IN_SLICE;
+    float fProj = dot((In.m_f2PosPS - f2EntryPoint.xy), f2EpipolarSliceDir) / fEpipolarSliceLen;
 
     // We need to manually perform bilateral filtering of the scattered radiance texture to
     // eliminate artifacts at depth discontinuities
-    float2 f2ScatteredColorUV = float2(fScatteredColorU, fEpipolarSlice);
+    float2 f2ScatteredColorUV = float2(fProj, fEpipolarSlice);
     float2 f2ScatteredColorTexDim;
     g_tex2DScatteredColor.GetDimensions(f2ScatteredColorTexDim.x, f2ScatteredColorTexDim.y);
     // Offset by 0.5 is essential, because texel centers have UV coordinates that are offset by half the texel size
@@ -982,7 +803,7 @@ float3 UnwarpEpipolarInsctrImage( SScreenSizeQuadVSOutput In, in float fCamSpace
     // f4SrcLocationsCamSpaceZ.z == g_tex2DEpipolarCamSpaceZ.SampleLevel(samPointClamp, f2ScatteredColorIJ, 0, int2(1,0))
     // f4SrcLocationsCamSpaceZ.w == g_tex2DEpipolarCamSpaceZ.SampleLevel(samPointClamp, f2ScatteredColorIJ, 0, int2(0,0))
 
-    return PerformBilateralInterpolation(f2BilinearWeights, f2ScatteredColorIJ, f4SrcLocationsCamSpaceZ, fCamSpaceZ, g_tex2DScatteredColor, f2ScatteredColorTexDim, samLinearClamp /* Do not use wrap mode for epipolar slice! */);
+    return PerformBilateralInterpolation(f2BilinearWeights, f2ScatteredColorIJ, f4SrcLocationsCamSpaceZ, fCamSpaceZ, g_tex2DScatteredColor, f2ScatteredColorTexDim, samLinearUClampVWrap);
 }
 
 float3 GetExtinction(float in_Dist)
@@ -1018,19 +839,15 @@ float3 ApplyInscatteredRadiancePS(SScreenSizeQuadVSOutput In) : SV_Target
 {
     float fCamSpaceZ = GetCamSpaceZ( ProjToUV(In.m_f2PosPS) );
     float3 f3InsctrIntegral = UnwarpEpipolarInsctrImage(In, fCamSpaceZ);
-
+    
     float3 f3ReconstructedPosWS = ProjSpaceXYZToWorldSpace(float3(In.m_f2PosPS.xy, fCamSpaceZ));
     float3 f3EyeVector = f3ReconstructedPosWS.xyz - g_CameraAttribs.f4CameraPos.xyz;
     float fDistToCamera = length(f3EyeVector);
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
     f3EyeVector /= fDistToCamera;
-    float3 f3InsctrColor = ApplyPhaseFunction(f3InsctrIntegral, dot(f3EyeVector, g_LightAttribs.f4DirOnLight.xyz));
-#else
-    float3 f3InsctrColor = f3InsctrIntegral;
-#endif
+    float3 f3InsctrColor = ApplyPhaseFunction(f3InsctrIntegral, f3EyeVector);
 
     float3 f3BackgroundColor = GetAttenuatedBackgroundColor(In, fDistToCamera);
-    return ToneMap(f3BackgroundColor + f3InsctrColor);
+    return f3BackgroundColor + f3InsctrColor;
 }
 
 float3 UnwarpEpipolarInsctrImagePS( SScreenSizeQuadVSOutput In ) : SV_Target
@@ -1098,17 +915,12 @@ float3 UpscaleInscatteredRadiancePS(SScreenSizeQuadVSOutput In) : SV_Target
     float3 f3ReconstructedPosWS = ProjSpaceXYZToWorldSpace( float3(In.m_f2PosPS.xy,fCamSpaceZ) );
     float3 f3EyeVector = f3ReconstructedPosWS.xyz - g_CameraAttribs.f4CameraPos.xyz;
     float fDistToCamera = length(f3EyeVector);
-
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
     f3EyeVector /= fDistToCamera;
-    float3 f3ScatteredLight = ApplyPhaseFunction(f3InsctrIntegral, dot(f3EyeVector, g_LightAttribs.f4DirOnLight.xyz));
-#else
-    float3 f3ScatteredLight = f3InsctrIntegral;
-#endif
+    float3 f3ScatteredLight = ApplyPhaseFunction(f3InsctrIntegral, f3EyeVector);
 
     float3 f3BackgroundColor = GetAttenuatedBackgroundColor(In, fDistToCamera);
 
-    return ToneMap(f3BackgroundColor + f3ScatteredLight);
+    return f3BackgroundColor + f3ScatteredLight;
 }
 
 technique11 UpscaleInscatteredRadiance
@@ -1158,7 +970,7 @@ void RenderSamplePositionsGS(point PassThroughVS_Output In[1],
     uint2 ui2InterpolationSources = g_tex2DInterpolationSource.Load( uint3(TexelIJ,0) );
     bool bIsInterpolation = ui2InterpolationSources.x != ui2InterpolationSources.y;
 
-    float2 f2QuadSize = (bIsInterpolation ? 1.f : 4.f) / SCREEN_RESLOUTION.xy;
+    float2 f2QuadSize = (bIsInterpolation ? 1.f : 4.f) / g_PPAttribs.m_f2ScreenResolution.xy;
     float4 MinMaxUV = float4(f2QuadCenterPos.x-f2QuadSize.x, f2QuadCenterPos.y - f2QuadSize.y, f2QuadCenterPos.x+f2QuadSize.x, f2QuadCenterPos.y + f2QuadSize.y);
     
     float3 f3Color = bIsInterpolation ? float3(0.5,0,0) : float3(1,0,0);
@@ -1211,125 +1023,6 @@ technique11 RenderSampleLocations
     }
 }
 
-float GetPrecomputedPtLghtSrcTexU(in float3 f3Pos, in float3 f3EyeDir, in float3 f3ClosestPointToLight)
-{
-    return (dot(f3Pos - f3ClosestPointToLight, f3EyeDir) + g_PPAttribs.m_fMaxTracingDistance) / (2*g_PPAttribs.m_fMaxTracingDistance);
-};
-
-void TruncateEyeRayToLightCone(in float3 f3EyeVector, 
-                               inout float3 f3RayStartPos, 
-                               inout float3 f3RayEndPos, 
-                               inout float fTraceLength, 
-                               out float fStartDistance,
-                               bool bIsCamInsideCone)
-{
-    // Intersect view ray with the light cone
-    float2 f2ConeIsecs = 
-        RayConeIntersect(g_LightAttribs.f4LightWorldPos.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.w,
-                         g_CameraAttribs.f4CameraPos.xyz, f3EyeVector);
-    
-    if( bIsCamInsideCone  )
-    {
-        f3RayStartPos = g_CameraAttribs.f4CameraPos.xyz;
-        fStartDistance = 0;
-        if( f2ConeIsecs.x > 0 )
-        {
-            // 
-            //   '.       *     .' 
-            //     '.      \  .'   
-            //       '.     \'  x > 0
-            //         '. .' \
-            //           '    \ 
-            //         '   '   \y = -FLT_MAX 
-            //       '       ' 
-            fTraceLength = min(f2ConeIsecs.x, fTraceLength);
-        }
-        else if( f2ConeIsecs.y > 0 )
-        {
-            // 
-            //                '.             .' 
-            //    x = -FLT_MAX  '.---*---->.' y > 0
-            //                    '.     .'
-            //                      '. .'  
-            //                        '
-            fTraceLength = min(f2ConeIsecs.y, fTraceLength);
-        }
-        f3RayEndPos = g_CameraAttribs.f4CameraPos.xyz + fTraceLength * f3EyeVector;
-    }
-    else if( all(f2ConeIsecs > 0) )
-    {
-        // 
-        //          '.             .' 
-        //    *-------'.-------->.' y > 0
-        //          x>0 '.     .'
-        //                '. .'  
-        //                  '
-        fTraceLength = min(f2ConeIsecs.y,fTraceLength);
-        f3RayEndPos   = g_CameraAttribs.f4CameraPos.xyz + fTraceLength * f3EyeVector;
-        f3RayStartPos = g_CameraAttribs.f4CameraPos.xyz + f2ConeIsecs.x * f3EyeVector;
-        fStartDistance = f2ConeIsecs.x;
-        fTraceLength -= f2ConeIsecs.x;
-    }
-    else if( f2ConeIsecs.y > 0 )
-    {
-        // 
-        //   '.       \     .'                '.         |   .' 
-        //     '.      \  .'                    '.       | .'   
-        //       '.     \'  y > 0                 '.     |'  y > 0
-        //         '. .' \                          '. .'| 
-        //           '    *                           '  |   
-        //         '   '   \x = -FLT_MAX            '   '|   x = -FLT_MAX 
-        //       '       '                        '      |' 
-        //                                               *
-        //
-        f3RayEndPos   = g_CameraAttribs.f4CameraPos.xyz + fTraceLength * f3EyeVector;
-        f3RayStartPos = g_CameraAttribs.f4CameraPos.xyz + f2ConeIsecs.y * f3EyeVector;
-        fStartDistance = f2ConeIsecs.y;
-        fTraceLength -= f2ConeIsecs.y;
-    }
-    else
-    {
-        fTraceLength = 0;
-        fStartDistance = 0;
-        f3RayStartPos = g_CameraAttribs.f4CameraPos.xyz;
-        f3RayEndPos   = g_CameraAttribs.f4CameraPos.xyz;
-    }
-    fTraceLength = max(fTraceLength,0);
-}
-
-#if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-
-const float2 GetSRNN05LUTParamLimits()
-{
-    // The first argument of the lookup table is the distance from the point light source to the view ray, multiplied by the scattering coefficient
-    // The second argument is the weird angle which is in the range from 0 t Pi/2, as tan(Pi/2) = +inf
-    return float2(
-        g_PPAttribs.m_fMaxTracingDistance * 2 * max(max(g_MediaParams.f4SummTotalBeta.r, g_MediaParams.f4SummTotalBeta.g), g_MediaParams.f4SummTotalBeta.b),
-        PI/2 );
-}
-float3 GetInsctrIntegral_SRNN05( in float3 f3A1, in float3 f3Tsv, in float fCosGamma, in float fSinGamma, in float fDistFromCamera)
-{
-    // f3A1 depends only on the location of the camera and the light source
-    // f3Tsv = fDistToLight * g_MediaParams.f4SummTotalBeta.rgb
-    float3 f3Tvp = fDistFromCamera * g_MediaParams.f4SummTotalBeta.rgb;
-    float3 f3Ksi = PI/4.f + 0.5f * atan( (f3Tvp - f3Tsv * fCosGamma) / (f3Tsv * fSinGamma) );
-    float2 f2SRNN05LUTParamLimits = GetSRNN05LUTParamLimits();
-    // float fGamma = acos(fCosGamma);
-    // F(A1, Gamma/2) defines constant offset and thus is not required
-    return float3(
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.x, f3Ksi.x)/f2SRNN05LUTParamLimits, 0).x /*- 
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.x, fGamma/2)/f2SRNN05LUTParamLimits, 0).x*/,
-
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.y, f3Ksi.y)/f2SRNN05LUTParamLimits, 0).x /*- 
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.y, fGamma/2)/f2SRNN05LUTParamLimits, 0).x*/,
-
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.z, f3Ksi.z)/f2SRNN05LUTParamLimits, 0).x /*- 
-                g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(f3A1.z, fGamma/2)/f2SRNN05LUTParamLimits, 0).x */);
-}
-#endif
-
-float3 EvaluatePhaseFunction(float fCosTheta);
-
 // This function calculates inscattered light integral over the ray from the camera to 
 // the specified world space position using ray marching
 float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
@@ -1337,140 +1030,40 @@ float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
                               in uniform const bool bUse1DMinMaxMipMap = false,
                               uint uiEpipolarSliceInd = 0 )
 {
-    float3 f3ReconstructedPos = ProjSpaceXYToWorldSpace(f2RayMarchingSampleLocation);
+    float3 f3RayEndPos = ProjSpaceXYToWorldSpace(f2RayMarchingSampleLocation);
 
-    float3 f3RayStartPos = g_CameraAttribs.f4CameraPos.xyz;
-    float3 f3RayEndPos = f3ReconstructedPos;
-    float3 f3EyeVector = f3RayEndPos.xyz - f3RayStartPos;
-    float fTraceLength = length(f3EyeVector);
-    f3EyeVector /= fTraceLength;
-        
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
-    // Update end position
-    fTraceLength = min(fTraceLength, g_PPAttribs.m_fMaxTracingDistance);
-    f3RayEndPos = g_CameraAttribs.f4CameraPos.xyz + fTraceLength * f3EyeVector;
-#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+    float3 f3EyeVector;
+    float fTraceLength;
+    GetTracingAttribs(f3RayEndPos, f3EyeVector, fTraceLength);
 
-    //                       Light
-    //                        *                   -
-    //                     .' |\                  |
-    //                   .'   | \                 | fClosestDistToLight
-    //                 .'     |  \                |
-    //               .'       |   \               |
-    //          Cam *--------------*--------->    -
-    //              |<--------|     \
-    //                  \
-    //                  fStartDistFromProjection
-
-    float fDistToLight = length( g_LightAttribs.f4LightWorldPos.xyz - g_CameraAttribs.f4CameraPos.xyz );
-    float fCosLV = dot(g_LightAttribs.f4DirOnLight.xyz, f3EyeVector);
-    float fDistToClosestToLightPoint = fDistToLight * fCosLV;
-    float fClosestDistToLight = fDistToLight * sqrt(1 - fCosLV*fCosLV);
-    float fV = fClosestDistToLight / g_PPAttribs.m_fMaxTracingDistance;
-    
-    float3 f3ClosestPointToLight = g_CameraAttribs.f4CameraPos.xyz + f3EyeVector * fDistToClosestToLightPoint;
-
-    float3 f3CameraInsctrIntegral = 0;
-    float3 f3RayTerminationInsctrIntegral = 0;
-#if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-
-    float fCameraU = GetPrecomputedPtLghtSrcTexU(g_CameraAttribs.f4CameraPos.xyz, f3EyeVector, f3ClosestPointToLight);
-    float fReconstrPointU = GetPrecomputedPtLghtSrcTexU(f3ReconstructedPos, f3EyeVector, f3ClosestPointToLight);
-
-    f3CameraInsctrIntegral = g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(fCameraU, fV), 0);
-    f3RayTerminationInsctrIntegral = exp(-fTraceLength*g_MediaParams.f4SummTotalBeta.rgb) * g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(fReconstrPointU, fV), 0);
-
-#elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-
-    float3 f3Tsv = fDistToLight * g_MediaParams.f4SummTotalBeta.rgb;
-    float fSinGamma = max(sqrt( 1 - fCosLV*fCosLV ), 1e-6);
-    float3 f3A0 = g_MediaParams.f4SummTotalBeta.rgb * g_MediaParams.f4SummTotalBeta.rgb * 
-                  //g_LightAttribs.f4LightColorAndIntensity.rgb * g_LightAttribs.f4LightColorAndIntensity.w *
-                  exp(-f3Tsv * fCosLV) / 
-                  (2.0*PI * f3Tsv * fSinGamma);
-    float3 f3A1 = f3Tsv * fSinGamma;
-    
-    f3CameraInsctrIntegral = -f3A0 * GetInsctrIntegral_SRNN05( f3A1, f3Tsv, fCosLV, fSinGamma, 0);
-    f3RayTerminationInsctrIntegral = -f3A0 * GetInsctrIntegral_SRNN05( f3A1, f3Tsv, fCosLV, fSinGamma, fTraceLength);
-
-#endif
-
-    float3 f3FullyLitInsctrIntegral = (f3CameraInsctrIntegral - f3RayTerminationInsctrIntegral) * 
-                                    g_LightAttribs.f4LightColorAndIntensity.rgb * g_LightAttribs.f4LightColorAndIntensity.w;
-    
-    bool bIsCamInsideCone = dot( -g_LightAttribs.f4DirOnLight.xyz, g_LightAttribs.f4SpotLightAxisAndCosAngle.xyz) > g_LightAttribs.f4SpotLightAxisAndCosAngle.w;
-
-    // Eye rays directed at exactly the light source requires special handling
-    if( fCosLV > 1 - 1e-6 )
-    {
-#if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_ANALYTIC
-        f3FullyLitInsctrIntegral = 1e+8;
-#endif
-        float IsInLight = bIsCamInsideCone ? 
-                            g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, g_LightAttribs.f4CameraUVAndDepthInShadowMap.xy, g_LightAttribs.f4CameraUVAndDepthInShadowMap.z ).x : 
-                            1;
-        // This term is required to eliminate bright point visible through scene geometry
-        // when the camera is outside the light cone
-        float fIsLightVisible = bIsCamInsideCone || (fDistToLight < fTraceLength);
-        return f3FullyLitInsctrIntegral * IsInLight * fIsLightVisible;
-    }
-
-    float fStartDistance;
-    TruncateEyeRayToLightCone(f3EyeVector, f3RayStartPos, f3RayEndPos, fTraceLength, fStartDistance, bIsCamInsideCone);
-
-#endif
-    
     // If tracing distance is very short, we can fall into an inifinte loop due to
     // 0 length step and crash the driver. Return from function in this case
     if( fTraceLength < g_PPAttribs.m_fMaxTracingDistance * 0.0001)
-    {
-#   if LIGHT_TYPE == LIGHT_TYPE_POINT
-        return f3FullyLitInsctrIntegral;
-#   else
         return float3(0,0,0);
-#   endif
-    }
-
+    
     // We trace the ray not in the world space, but in the light projection space
 
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
     // Get start and end positions of the ray in the light projection space
-    float4 f4StartUVAndDepthInLightSpace = float4(g_LightAttribs.f4CameraUVAndDepthInShadowMap.xyz,1);
-#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
-    float4 f4StartUVAndDepthInLightSpace = WorldSpaceToShadowMapUV(f3RayStartPos);
-#endif
-
-    //f4StartUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
+    float3 f3StartUVAndDepthInLightSpace = g_LightAttribs.f4CameraUVAndDepthInShadowMap.xyz;
+    f3StartUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
     // Compute shadow map UV coordiantes of the ray end point and its depth in the light space
-    float4 f4EndUVAndDepthInLightSpace = WorldSpaceToShadowMapUV(f3RayEndPos);
-    //f4EndUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
+    float3 f3EndUVAndDepthInLightSpace = WorldSpaceToShadowMapUV(f3RayEndPos);
+    f3EndUVAndDepthInLightSpace.z -= SHADOW_MAP_DEPTH_BIAS;
 
     // Calculate normalized trace direction in the light projection space and its length
-    float3 f3ShadowMapTraceDir = f4EndUVAndDepthInLightSpace.xyz - f4StartUVAndDepthInLightSpace.xyz;
+    float3 f3ShadowMapTraceDir = f3EndUVAndDepthInLightSpace - f3StartUVAndDepthInLightSpace;
     // If the ray is directed exactly at the light source, trace length will be zero
     // Clamp to a very small positive value to avoid division by zero
-    // Also assure that trace len is not longer than maximum meaningful length
-    float fTraceLenInShadowMapUVSpace = clamp( length( f3ShadowMapTraceDir.xy ), 1e-6, sqrt(2.f) );
+    float fTraceLenInShadowMapUVSpace = max( length( f3ShadowMapTraceDir.xy ), 1e-6);
     f3ShadowMapTraceDir /= fTraceLenInShadowMapUVSpace;
     
     float fShadowMapUVStepLen = 0;
-    float2 f2SliceOriginUV = 0;
     if( bUse1DMinMaxMipMap )
     {
         // Get UV direction for this slice
-        float4 f4SliceUVDirAndOrigin = g_tex2DSliceUVDirAndOrigin.Load( uint3(uiEpipolarSliceInd,0,0) );
-        if( all(f4SliceUVDirAndOrigin == g_f4IncorrectSliceUVDirAndStart) )
-        {
-#   if LIGHT_TYPE == LIGHT_TYPE_POINT
-           return f3FullyLitInsctrIntegral;
-#   else
-            return float3(0,0,0);
-#   endif
-        }
-
+        float2 f2SliceDir = g_tex2DSliceUVDirInShadowMap.Load( uint3(uiEpipolarSliceInd,0,0) );
         // Scale with the shadow map texel size
-        fShadowMapUVStepLen = length(f4SliceUVDirAndOrigin.xy * g_PPAttribs.m_f2ShadowMapTexelSize);
-        f2SliceOriginUV = f4SliceUVDirAndOrigin.zw;
+        fShadowMapUVStepLen = length(f2SliceDir*g_PPAttribs.m_f2ShadowMapTexelSize);
     }
     else
     {
@@ -1487,49 +1080,17 @@ float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
     //fRayStepLengthWS = max(fRayStepLengthWS, g_PPAttribs.m_fMaxTracingDistance * 1e-5);
 
     // Scale trace direction in light projection space to calculate the final step
-    float3 f3ShadowMapUVAndDepthStep = f3ShadowMapTraceDir * fShadowMapUVStepLen;
+    float3 f3ShadowMapUVAndDepthStep = f3ShadowMapTraceDir.xyz * fShadowMapUVStepLen;
 
     float3 f3InScatteringIntegral = 0;
-    float3 f3PrevInsctrIntegralValue = 1; // exp( -0 * g_MediaParams.f4SummTotalBeta.rgb );
+    float3 f3PrevInsctrIntegralValue = -1; // -exp( -0 * g_MediaParams.f4SummTotalBeta.rgb );
     // March the ray
     float fTotalMarchedDistance = 0;
-    float fTotalMarchedDistInUVSpace = 0;
-    float3 f3CurrShadowMapUVAndDepthInLightSpace = f4StartUVAndDepthInLightSpace.xyz;
+    float3 f3CurrShadowMapUVAndDepthInLightSpace = f3StartUVAndDepthInLightSpace;
 
     // The following variables are used only if 1D min map optimization is enabled
-    uint uiMinLevel = 0;//max( log2( (fTraceLenInShadowMapUVSpace/fShadowMapUVStepLen) / g_MiscParams.fMaxStepsAlongRay), 0 );
+    uint uiMinLevel = max( log2( (fTraceLenInShadowMapUVSpace/fShadowMapUVStepLen) / g_MiscParams.fMaxStepsAlongRay), 0 );
     uint uiCurrSamplePos = 0;
-
-    // For spot light, the slice start UV is either location of camera in light proj space
-    // or intersection of the slice with the cone rib. No adjustment is required in either case
-//#if LIGHT_TYPE == LIGHT_TYPE_SPOT
-//    uiCurrSamplePos = length(f4StartUVAndDepthInLightSpace.xy - f2SliceOriginUV.xy) / fShadowMapUVStepLen;
-//#endif
-
-#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
-   
-#   if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-        float fInsctrTexStartU = GetPrecomputedPtLghtSrcTexU(f3RayStartPos, f3EyeVector, f3ClosestPointToLight);
-        float fInsctrTexEndU = GetPrecomputedPtLghtSrcTexU(f3RayEndPos, f3EyeVector, f3ClosestPointToLight);
-        f3PrevInsctrIntegralValue = exp(-fStartDistance*g_MediaParams.f4SummTotalBeta.rgb) * g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(fInsctrTexStartU, fV), 0);
-#   elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-        f3PrevInsctrIntegralValue = -f3A0 * GetInsctrIntegral_SRNN05( f3A1, f3Tsv, fCosLV, fSinGamma, fStartDistance);
-#   endif
-
-#   if LIGHT_TYPE == LIGHT_TYPE_POINT && (INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT || INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05)
-        // Add inscattering contribution outside the light cone
-        f3InScatteringIntegral = 
-                    ( f3CameraInsctrIntegral - 
-                      f3PrevInsctrIntegralValue +
-#       if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-                      exp(-(fStartDistance+fTraceLength)*g_MediaParams.f4SummTotalBeta.rgb) * g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(fInsctrTexEndU, fV), 0)
-#       else
-                      - f3A0 * GetInsctrIntegral_SRNN05( f3A1, f3Tsv, fCosLV, fSinGamma, fStartDistance+fTraceLength) 
-#       endif
-                      - f3RayTerminationInsctrIntegral ) * g_LightAttribs.f4LightColorAndIntensity.rgb;
-#   endif
-#endif
-
     uint uiCurrTreeLevel = 0;
     // Note that min/max shadow map does not contain finest resolution level
     // The first level it contains corresponds to step == 2
@@ -1537,22 +1098,15 @@ float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
     float fStep = 1.f;
     float fMaxShadowMapStep = g_PPAttribs.m_uiMaxShadowMapStep;
 
-#if (LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT) && INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_ANALYTIC
-    float fPrevDistFromCamera = fStartDistance;
-#endif
-
     [loop]
-    while( fTotalMarchedDistInUVSpace < fTraceLenInShadowMapUVSpace )
+    while( fTotalMarchedDistance < fTraceLength )
     {
         // Clamp depth to a very small positive value to not let the shadow rays get clipped at the
         // shadow map far clipping plane
         float fCurrDepthInLightSpace = max(f3CurrShadowMapUVAndDepthInLightSpace.z, 1e-7);
         float IsInLight = 0;
-
-#if ACCEL_STRUCT > ACCEL_STRUCT_NONE
         if( bUse1DMinMaxMipMap )
         {
-
             // If the step is smaller than the maximum allowed and the sample
             // is located at the appropriate position, advance to the next coarser level
             if( fStep < fMaxShadowMapStep && ((uiCurrSamplePos & ((2<<uiCurrTreeLevel)-1)) == 0) )
@@ -1561,47 +1115,25 @@ float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
                 uiCurrTreeLevel++;
                 fStep *= 2.f;
             }
-
+            
             while(uiCurrTreeLevel > uiMinLevel)
             {
-                // Compute light space depths at the ends of the current ray section
-
-                // What we need here is actually depth which is divided by the camera view space z
-                // Thus depth can be correctly interpolated in screen space:
-                // http://www.comp.nus.edu.sg/~lowkl/publications/lowk_persp_interp_techrep.pdf
-                // A subtle moment here is that we need to be sure that we can skip fStep samples 
-                // starting from 0 up to fStep-1. We do not need to do any checks against the sample fStep away:
-                //
-                //     --------------->
-                //
-                //          *
-                //               *         *
-                //     *              *     
-                //     0    1    2    3
-                //
-                //     |------------------>|
-                //           fStep = 4
-                float fNextLightSpaceDepth = f3CurrShadowMapUVAndDepthInLightSpace.z + f3ShadowMapUVAndDepthStep.z * (fStep-1);
-                float2 f2StartEndDepthOnRaySection = float2(f3CurrShadowMapUVAndDepthInLightSpace.z, fNextLightSpaceDepth);
-                f2StartEndDepthOnRaySection = max(f2StartEndDepthOnRaySection, 1e-7);
-
+                // Compute minimum and maximum light space depths at the ends of the current ray section
+                float2 f2MinMaxDepthOnRaySection;
+                float fNextLightSpaceDepth = f3CurrShadowMapUVAndDepthInLightSpace.z + f3ShadowMapUVAndDepthStep.z * fStep;
+                f2MinMaxDepthOnRaySection.x = min(f3CurrShadowMapUVAndDepthInLightSpace.z, fNextLightSpaceDepth);
+                f2MinMaxDepthOnRaySection.y = max(f3CurrShadowMapUVAndDepthInLightSpace.z, fNextLightSpaceDepth);
+                f2MinMaxDepthOnRaySection = max(f2MinMaxDepthOnRaySection, 1e-7);
                 // Load 1D min/max depths
-                MIN_MAX_DATA_FORMAT fnCurrMinMaxDepth = g_tex2DMinMaxLightSpaceDepth.Load( uint3( (uiCurrSamplePos>>uiCurrTreeLevel) + iLevelDataOffset, uiEpipolarSliceInd, 0) );
-                
-#   if ACCEL_STRUCT == ACCEL_STRUCT_BV_TREE
-                float4 f4CurrMinMaxDepth = fnCurrMinMaxDepth;
-#   elif ACCEL_STRUCT == ACCEL_STRUCT_MIN_MAX_TREE
-                float4 f4CurrMinMaxDepth = fnCurrMinMaxDepth.xyxy;
-#   endif
-
-#   if !STAINED_GLASS
-                IsInLight = all( f2StartEndDepthOnRaySection >= f4CurrMinMaxDepth.yw );
-#   endif
-                bool bIsInShadow = all( f2StartEndDepthOnRaySection < f4CurrMinMaxDepth.xz );
-
+                float2 f2CurrMinMaxDepth = 1 - g_tex2DMinMaxLightSpaceDepth.Load( uint3( (uiCurrSamplePos>>uiCurrTreeLevel) + iLevelDataOffset, uiEpipolarSliceInd, 0) );    
+#if !STAINED_GLASS
+                IsInLight = (f2CurrMinMaxDepth.y <= f2MinMaxDepthOnRaySection.x) ? 1.f : 0.f;
+#endif
+                bool bIsInShadow = f2CurrMinMaxDepth.x > f2MinMaxDepthOnRaySection.y;
                 if( IsInLight || bIsInShadow )
                     // If the ray section is fully lit or shadow, we can break the loop
                     break;
+
                 // If the ray section is neither fully lit, nor shadowed, we have to go to the finer level
                 uiCurrTreeLevel--;
                 iLevelDataOffset -= g_PPAttribs.m_uiMinMaxShadowMapResolution >> uiCurrTreeLevel;
@@ -1612,83 +1144,45 @@ float3 CalculateInscattering( in float2 f2RayMarchingSampleLocation,
             [branch]
             if( uiCurrTreeLevel <= uiMinLevel )
             {
-                IsInLight = g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, f3CurrShadowMapUVAndDepthInLightSpace.xy, fCurrDepthInLightSpace  ).x;
+                IsInLight = 1 - g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, f3CurrShadowMapUVAndDepthInLightSpace.xy, fCurrDepthInLightSpace  ).x;
             }
         }
         else
-#endif
         {
-            IsInLight = g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, f3CurrShadowMapUVAndDepthInLightSpace.xy, fCurrDepthInLightSpace ).x;
+            IsInLight = 1 - g_tex2DLightSpaceDepthMap.SampleCmpLevelZero( samComparison, f3CurrShadowMapUVAndDepthInLightSpace.xy, fCurrDepthInLightSpace ).x;
         }
 
         float3 LightColorInCurrPoint;
-        LightColorInCurrPoint = g_LightAttribs.f4LightColorAndIntensity.rgb;
+        LightColorInCurrPoint = g_LightAttribs.f4SunColorAndIntensityAtGround.rgb;
 
 #if STAINED_GLASS
         float4 SGWColor = g_tex2DStainedGlassColorDepth.SampleLevel( samLinearClamp, f3CurrShadowMapUVAndDepthInLightSpace.xy, 0).rgba;
         LightColorInCurrPoint.rgb *= ((SGWColor.a < fCurrDepthInLightSpace) ? float3(1,1,1) : SGWColor.rgb*3);
 #endif
 
+        fTotalMarchedDistance += fRayStepLengthWS * fStep;
         f3CurrShadowMapUVAndDepthInLightSpace += f3ShadowMapUVAndDepthStep * fStep;
-        fTotalMarchedDistInUVSpace += fShadowMapUVStepLen * fStep;
         uiCurrSamplePos += 1 << uiCurrTreeLevel; // int -> float conversions are slow
 
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
-        fTotalMarchedDistance += fRayStepLengthWS * fStep;
         float fIntegrationDist = min(fTotalMarchedDistance, fTraceLength);
-        // Calculate inscattering integral from the camera to the current point analytically:
-        float3 f3CurrInscatteringIntegralValue = exp( -fIntegrationDist * g_MediaParams.f4SummTotalBeta.rgb );
-#elif LIGHT_TYPE == LIGHT_TYPE_SPOT || LIGHT_TYPE == LIGHT_TYPE_POINT
-        // http://www.comp.nus.edu.sg/~lowkl/publications/lowk_persp_interp_techrep.pdf
-        // An attribute A itself cannot be correctly interpolated in screen space
-        // However, A/z where z is the camera view space coordinate, does interpolate correctly
-        // 1/z also interpolates correctly, thus to properly interpolate A it is necessary to
-        // do the following: lerp( A/z ) / lerp ( 1/z )
-        // Note that since eye ray directed at exactly the light source is handled separately,
-        // camera space z can never become zero
-        float fRelativePos = saturate(fTotalMarchedDistInUVSpace / fTraceLenInShadowMapUVSpace);
-        float fCurrW = lerp(f4StartUVAndDepthInLightSpace.w, f4EndUVAndDepthInLightSpace.w, fRelativePos);
-        float fDistFromCamera = lerp(fStartDistance * f4StartUVAndDepthInLightSpace.w, (fStartDistance+fTraceLength) * f4EndUVAndDepthInLightSpace.w, fRelativePos) / fCurrW;
-        float3 f3CurrInscatteringIntegralValue = 0;
-#   if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-            float fCurrU = lerp(fInsctrTexStartU * f4StartUVAndDepthInLightSpace.w, fInsctrTexEndU * f4EndUVAndDepthInLightSpace.w, fRelativePos) / fCurrW;
-            f3CurrInscatteringIntegralValue = exp(-fDistFromCamera*g_MediaParams.f4SummTotalBeta.rgb) * g_tex2DPrecomputedPointLightInsctr.SampleLevel(samLinearClamp, float2(fCurrU, fV), 0);
-#   elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-            f3CurrInscatteringIntegralValue = -f3A0 * GetInsctrIntegral_SRNN05( f3A1, f3Tsv, fCosLV, fSinGamma, fDistFromCamera);
-#   elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_ANALYTIC
-            float3 f3DirFromLight = g_CameraAttribs.f4CameraPos.xyz  + fDistFromCamera * f3EyeVector - g_LightAttribs.f4LightWorldPos.xyz;
-            float fDistFromLightSqr = max(dot(f3DirFromLight, f3DirFromLight), 1e-10);
-            float fDistFromLight = sqrt(fDistFromLightSqr);
-            f3DirFromLight /= fDistFromLight;
-            float fCosTheta = dot(-f3EyeVector, f3DirFromLight);
-            float3 f3Extinction = exp(-(fDistFromCamera+fDistFromLight)*g_MediaParams.f4SummTotalBeta.rgb);
-            f3CurrInscatteringIntegralValue = 0;
-            f3PrevInsctrIntegralValue = f3Extinction * EvaluatePhaseFunction(fCosTheta) * (fDistFromCamera - fPrevDistFromCamera) / fDistFromLightSqr;
-            fPrevDistFromCamera = fDistFromCamera;
-#   endif
 
-#endif
+        // Calculate inscattering integral from the camera to the current point analytically:
+        float3 f3CurrInscatteringIntegralValue = -exp( -fIntegrationDist * g_MediaParams.f4SummTotalBeta.rgb );//ComputeInsctrLightIntegral(fIntegrationDist);
 
         float3 dScatteredLight;
         // dScatteredLight contains correct scattering light value with respect to extinction
-        dScatteredLight.rgb = (f3PrevInsctrIntegralValue.rgb - f3CurrInscatteringIntegralValue.rgb) * IsInLight;
+        dScatteredLight.rgb = (f3CurrInscatteringIntegralValue.rgb - f3PrevInsctrIntegralValue.rgb) * IsInLight;
         dScatteredLight.rgb *= LightColorInCurrPoint;
         f3InScatteringIntegral.rgb += dScatteredLight.rgb;
 
         f3PrevInsctrIntegralValue.rgb = f3CurrInscatteringIntegralValue.rgb;
     }
 
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
     f3InScatteringIntegral = f3InScatteringIntegral / g_MediaParams.f4SummTotalBeta.rgb;
-#else
-    f3InScatteringIntegral *= g_LightAttribs.f4LightColorAndIntensity.w;
-#endif
 
-#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
     if( bApplyPhaseFunction )
-        return ApplyPhaseFunction(f3InScatteringIntegral, dot(f3EyeVector, g_LightAttribs.f4DirOnLight.xyz));
+        return ApplyPhaseFunction(f3InScatteringIntegral, f3EyeVector);
     else
-#endif
         return f3InScatteringIntegral;
 }
 
@@ -1775,7 +1269,7 @@ float3 FixAndApplyInscatteredRadiancePS(SScreenSizeQuadVSOutput In) : SV_Target
                               0 // Ignored
                               );
 
-    return ToneMap(f3BackgroundColor + f3InsctrColor.rgb);
+    return f3BackgroundColor + f3InsctrColor.rgb;
 }
 
 technique11 FixInscatteredRadiance
@@ -1800,105 +1294,5 @@ technique11 FixInscatteredRadiance
         SetVertexShader( CompileShader(vs_5_0, GenerateScreenSizeQuadVS() ) );
         SetGeometryShader( NULL );
         SetPixelShader( CompileShader(ps_5_0, FixAndApplyInscatteredRadiancePS() ) );
-    }
-}
-
-float3 EvaluatePhaseFunction(float fCosTheta)
-{
-#if ANISOTROPIC_PHASE_FUNCTION
-    float3 f3RlghInsctr =  g_MediaParams.f4AngularRayleighBeta.rgb * (1.0 + fCosTheta*fCosTheta);
-    float HGTemp = rsqrt( dot(g_MediaParams.f4HG_g.yz, float2(1.f, fCosTheta)) );
-    float3 f3MieInsctr = g_MediaParams.f4AngularMieBeta.rgb * g_MediaParams.f4HG_g.x * (HGTemp*HGTemp*HGTemp);
-#else
-    float3 f3RlghInsctr = g_MediaParams.f4TotalRayleighBeta.rgb / (4.0*PI);
-    float3 f3MieInsctr = g_MediaParams.f4TotalMieBeta.rgb / (4.0*PI);
-#endif
-
-    return f3RlghInsctr + f3MieInsctr;
-}
-
-
-INSCTR_LUT_FORMAT PrecomputePointLightInsctrPS(SScreenSizeQuadVSOutput In) : SV_Target
-{
-#if INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_MY_LUT
-
-    float fMaxTracingDistance = g_PPAttribs.m_fMaxTracingDistance;
-    //                       Light
-    //                        *                   -
-    //                     .' |\                  |
-    //                   .'   | \                 | fClosestDistToLight
-    //                 .'     |  \                |
-    //               .'       |   \               |
-    //          Cam *--------------*--------->    -
-    //              |<--------|     \
-    //                  \
-    //                  fStartDistFromProjection
-    //
-    float2 f2UV = ProjToUV(In.m_f2PosPS.xy);
-    float fStartDistFromProjection = In.m_f2PosPS.x * fMaxTracingDistance;
-    float fClosestDistToLight = f2UV.y * fMaxTracingDistance;
-
-    float3 f3InsctrRadinance = 0;
-    
-    // There is a very important property: pre-computed scattering must be monotonical with respect
-    // to u coordinate. However, if we simply subdivide the tracing distance onto the equal number of steps
-    // as in the following code, we cannot guarantee this
-    // 
-    // float fStepWorldLen = length(f2StartPos-f2EndPos) / fNumSteps;
-    // for( float fRelativePos=0; fRelativePos < 1; fRelativePos += 1.f/fNumSteps )
-    // {
-    //      float2 f2CurrPos = lerp(f2StartPos, f2EndPos, fRelativePos);    
-    //      ...
-    //
-    // To assure that the scattering is monotonically increasing, we must go through
-    // exactly the same taps for all pre-computations. The simple method to achieve this
-    // is to make the world step the same as the difference between two neighboring texels:
-    // The step can also be integral part of it, but not greater! So /2 will work, but *2 won't!
-    float fStepWorldLen = ddx(fStartDistFromProjection);
-    for(float fDistFromProj = fStartDistFromProjection; fDistFromProj < fMaxTracingDistance; fDistFromProj += fStepWorldLen)
-    {
-        float2 f2CurrPos = float2(fDistFromProj, -fClosestDistToLight);
-        float fDistToLightSqr = dot(f2CurrPos, f2CurrPos);
-        float fDistToLight = sqrt(fDistToLightSqr);
-        float fDistToCam = f2CurrPos.x - fStartDistFromProjection;
-        float3 f3Extinction = exp( -(fDistToCam + fDistToLight) * g_MediaParams.f4SummTotalBeta.rgb );
-        float2 f2LightDir = normalize(f2CurrPos);
-        float fCosTheta = -f2LightDir.x;
-
-        float3 f3dLInsctr = f3Extinction * EvaluatePhaseFunction(fCosTheta) * fStepWorldLen / max(fDistToLightSqr,fMaxTracingDistance*fMaxTracingDistance*1e-8);
-        f3InsctrRadinance += f3dLInsctr;
-    }
-    return f3InsctrRadinance;
-
-#elif INSCTR_INTGL_EVAL_METHOD == INSCTR_INTGL_EVAL_METHOD_SRNN05
-    
-    float fPrecomputedFuncValue = 0;
-    float2 f2UV = ProjToUV(In.m_f2PosPS.xy);
-    f2UV *= GetSRNN05LUTParamLimits();
-    float fKsiStep = ddy(f2UV.y);
-    for(float fKsi = 0; fKsi < f2UV.y; fKsi += fKsiStep)
-    {
-        fPrecomputedFuncValue += exp( -f2UV.x * tan(fKsi) );
-    }
-
-    fPrecomputedFuncValue *= fKsiStep;
-    return fPrecomputedFuncValue;
-
-#endif
-
-}
-
-
-technique11 PrecomputePointLightInsctrTech
-{
-    pass PAttenuateBackground
-    {
-        SetBlendState( NoBlending, float4( 0.0f, 0.0f, 0.0f, 0.0f ), 0xFFFFFFFF );
-        SetRasterizerState( RS_SolidFill_NoCull );
-        SetDepthStencilState( DSS_NoDepthTest, 0 );
-
-        SetVertexShader( CompileShader(vs_5_0, GenerateScreenSizeQuadVS() ) );
-        SetGeometryShader( NULL );
-        SetPixelShader( CompileShader(ps_5_0, PrecomputePointLightInsctrPS() ) );
     }
 }

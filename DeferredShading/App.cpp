@@ -38,7 +38,8 @@ App::App() :
 	mSSAO( 0 ),
 	mGBuffer( 0 ),
 	mShadowMap( 0 ),
-	mShadowFX( 0 )
+	mShadowFX( 0 ),
+	mLightScatterPostProcess( 0 )
 {
 	mLightSctrPostProcess = new CLightSctrPostProcess;
 }
@@ -166,6 +167,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullNone ) );
 
 	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
+	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice,
+		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024 );
     
 	return S_OK;
 }
@@ -222,6 +225,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mShadowFX );
 
 	mLightSctrPostProcess->OnDestroyDevice();
+	SAFE_DELETE( mLightScatterPostProcess );
 }
 
 //--------------------------------------------------------------------------------------
@@ -557,114 +561,262 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
 	{
-		// Get the camera position
-		D3DXMATRIX CameraWorld;
-		D3DXMatrixInverse(&CameraWorld, NULL, &D3DXMATRIX((float*)&mCamera.View()));
-		D3DXVECTOR3 CameraPos = *(D3DXVECTOR3*)&CameraWorld._41;
+		XMVECTOR dirOnLight = XMVector3Normalize(XMVectorSet(-0, -(-1), -1, 0));
+		XMFLOAT4 lightScreenPos;
+		XMStoreFloat4( &lightScreenPos, XMVector4Transform( dirOnLight, mCamera.ViewProj() ) );
 
-		// Hardcoded directional light values
-		D3DXVECTOR3 dirOnLight = D3DXVECTOR3(-0, -(-1), -1);
-		D3DXVECTOR4 lightColorAndIntensity, ambientLight;
-		mLightSctrPostProcess->ComputeSunColor( dirOnLight, lightColorAndIntensity, ambientLight );
+		mLightScatterPostProcess->PerformLightScatter( pd3dImmediateContext, mMainDepthSRV, mCamera.Proj(),
+			XMFLOAT2(mBackBufferSurfaceDesc->Width, mBackBufferSurfaceDesc->Height), lightScreenPos );
 
-		SFrameAttribs frameAttribs;
-		frameAttribs.pd3dDevice = pd3dDevice;
-		frameAttribs.pd3dDeviceContext = pd3dImmediateContext;
-
-		frameAttribs.LightAttribs.f4DirOnLight = D3DXVECTOR4(dirOnLight.x, dirOnLight.y, dirOnLight.z, 0);
-
-		float dist = 30;
-		(D3DXVECTOR3&)frameAttribs.LightAttribs.f4LightWorldPos = D3DXVECTOR3(dirOnLight.x * dist, dirOnLight.y * dist, dirOnLight.z * dist);
-		frameAttribs.LightAttribs.f4LightWorldPos.w = 1;
-
-		frameAttribs.LightAttribs.f4LightColorAndIntensity = lightColorAndIntensity;
-		frameAttribs.LightAttribs.f4AmbientLight = ambientLight;
-
-		D3DXMATRIX lightView;
-		D3DXMatrixLookAtLH(&lightView, (D3DXVECTOR3*)&frameAttribs.LightAttribs.f4LightWorldPos, &D3DXVECTOR3(0, 0, 0), &D3DXVECTOR3(0, 1, 0));
-		D3DXMATRIX lightProj;
-		D3DXMatrixOrthoLH(&lightProj, 100, 100, 0.1, 1000.0f);
-		D3DXMATRIX worldToLightProj;
-		D3DXMatrixMultiply(&worldToLightProj, &lightView, &lightProj);
-		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightViewT, &lightView );
-		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightProjT, &lightProj );
-		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mWorldToLightProjSpaceT, &worldToLightProj);
-		XMMATRIX cameraViewProjInverseXM = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
-		D3DXMATRIX cameraViewProjInverse = D3DXMATRIX((float*)&cameraViewProjInverseXM);
-		D3DXMATRIX mCameraProjToLightProj = cameraViewProjInverse * (*worldToLightProj);
-		D3DXMatrixTranspose( &frameAttribs.LightAttribs.mCameraProjToLightProjSpaceT, &mCameraProjToLightProj);
-
-		// Calculate location of the sun on the screen
-        D3DXVECTOR4 &f4LightPosPS = frameAttribs.LightAttribs.f4LightScreenPos;
-		D3DXVec4Transform(&f4LightPosPS, &frameAttribs.LightAttribs.f4DirOnLight, &D3DXMATRIX((float*)&mCamera.ViewProj()));
-		f4LightPosPS /= f4LightPosPS.w;
-		float fDistToLightOnScreen = D3DXVec2Length( (D3DXVECTOR2*)&f4LightPosPS );
-        float fMaxDist = 100;
-		if( fDistToLightOnScreen > fMaxDist )
-            (D3DXVECTOR2&)f4LightPosPS *= fMaxDist/fDistToLightOnScreen;
-
-		frameAttribs.LightAttribs.bIsLightOnScreen = abs(f4LightPosPS.x) <= 1 && abs(f4LightPosPS.y) <= 1;
-
-		// Compute camera UV in shadow map
-        D3DXVECTOR4 f4CameraPosInLightProjSpace;
-        D3DXMATRIX mWorldToLightProjSpace;
-        D3DXVECTOR4 f4CameraPos = D3DXVECTOR4(CameraPos.x, CameraPos.y, CameraPos.z, 1);
-        D3DXVec4Transform(&f4CameraPosInLightProjSpace, &f4CameraPos, &worldToLightProj);
-        (D3DXVECTOR3&)f4CameraPosInLightProjSpace /= f4CameraPosInLightProjSpace.w;
-        (D3DXVECTOR2&)frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap = D3DXVECTOR2(0.5f + 0.5f*f4CameraPosInLightProjSpace.x, 0.5f - 0.5f*f4CameraPosInLightProjSpace.y);
-        frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.z = f4CameraPosInLightProjSpace.z;
-        frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.w = f4CameraPosInLightProjSpace.w;
-
-		frameAttribs.CameraAttribs.f4CameraPos = D3DXVECTOR4(CameraPos.x, CameraPos.y, CameraPos.z, 0);            ///< Camera world position
-        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewT, &D3DXMATRIX((float*)&mCamera.View()));
-        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mProjT, &D3DXMATRIX((float*)&mCamera.Proj()));
-        D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewProjInvT, &cameraViewProjInverse);
-
-		frameAttribs.ptex2DSrcColorBufferSRV = mCompositeSRV;
-        frameAttribs.ptex2DDepthBufferSRV    = mMainDepthSRV;
-        frameAttribs.ptex2DShadowMapSRV      = mShadowMap->DepthMapSRV();
-        frameAttribs.pDstRTV                 = rtv;
-        frameAttribs.pDstDSV                 = 0;
-		ID3D11ShaderResourceView *srv = 0;
-		frameAttribs.ptex2DStainedGlassSRV	 = srv;
-
-		SPostProcessingAttribs ppAttribs;
-		ppAttribs.m_bAnisotropicPhaseFunction = FALSE;
-		ppAttribs.m_bCorrectScatteringAtDepthBreaks = TRUE;
-		ppAttribs.m_bOptimizeSampleLocations = TRUE;
-		ppAttribs.m_bShowDepthBreaks = FALSE;
-		ppAttribs.m_bShowLightingOnly = FALSE;
-		ppAttribs.m_bShowSampling = FALSE;
-		ppAttribs.m_bStainedGlass = FALSE;
-		ppAttribs.m_f2ShadowMapTexelSize = D3DXVECTOR2(1.0f/mShadowMap->Resolution(), 1.0f/mShadowMap->Resolution());
-		D3DXVECTOR4 f4MieColor = ppAttribs.m_f4MieBeta / SPostProcessingAttribs().m_f4MieBeta.x;
-		ppAttribs.m_f4MieBeta = f4MieColor * SPostProcessingAttribs().m_f4MieBeta.x;
-		D3DXVECTOR4 f4RlghColor = ppAttribs.m_f4RayleighBeta / SPostProcessingAttribs().m_f4RayleighBeta.z;
-		ppAttribs.m_f4RayleighBeta = f4RlghColor * SPostProcessingAttribs().m_f4RayleighBeta.z;
-		ppAttribs.m_fMaxTracingDistance = 100;
-		ppAttribs.m_fDistanceScaler = 60000.f / ppAttribs.m_fMaxTracingDistance;
-		ppAttribs.m_fDownscaleFactor = 1.f;
-		ppAttribs.m_fExposure = 1.f;
-		ppAttribs.m_fRefinementThreshold = 20.f;
-		ppAttribs.m_uiAccelStruct = 1;
-		ppAttribs.m_uiEpipoleSamplingDensityFactor = 4;
-		ppAttribs.m_uiInitialSampleStepInSlice = 16;
-		ppAttribs.m_uiInsctrIntglEvalMethod = 0;
-		ppAttribs.m_uiLightSctrTechnique = 0;
-		ppAttribs.m_uiLightType = 0;
-		ppAttribs.m_uiMaxSamplesInSlice = 512;
-		ppAttribs.m_uiMaxShadowMapStep = mShadowMap->Resolution() / 32;
-		ppAttribs.m_uiMinMaxShadowMapResolution = mShadowMap->Resolution();
-		ppAttribs.m_uiNumEpipolarSlices = 1024;
-		ppAttribs.m_uiShadowMapResolution = mShadowMap->Resolution();
-		
-		mLightSctrPostProcess->PerformPostProcessing(frameAttribs, ppAttribs);
-
-		// These are changed in the post process.
-		pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
-		pd3dImmediateContext->RSSetState( 0 );
-		pd3dImmediateContext->OMSetBlendState( 0, 0, 0xFFFFFFFF );
+		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+		pd3dImmediateContext->OMSetDepthStencilState( NULL, 0 );
+		pd3dImmediateContext->RSSetViewports( 1, &fullViewport );
 	}
+	//{
+	//	// Hardcoded directional light values
+	//	D3DXVECTOR3 vDirectionOnSun;
+	//	D3DXVec3Normalize( &vDirectionOnSun, &D3DXVECTOR3(-0, -(-1), -1) );
+
+	//	XMFLOAT4X4 CameraWorld;
+	//	XMStoreFloat4x4( &CameraWorld, XMMatrixInverse( &XMMatrixDeterminant( mCamera.View() ), mCamera.View() ) );
+	//	XMFLOAT3 CameraPos = *(XMFLOAT3*)&CameraWorld._41;
+
+	//	XMFLOAT4X4 viewXM, projXM, mViewProjInverseMatrXM;
+	//	XMStoreFloat4x4( &viewXM, mCamera.View() );
+	//	D3DXMATRIX view = D3DXMATRIX(
+	//		viewXM._11, viewXM._12, viewXM._13, viewXM._14,
+	//		viewXM._21, viewXM._22, viewXM._23, viewXM._24,
+	//		viewXM._31, viewXM._32, viewXM._33, viewXM._34,
+	//		viewXM._41, viewXM._42, viewXM._43, viewXM._44 );
+	//	XMStoreFloat4x4( &projXM, mCamera.Proj() );
+	//	D3DXMATRIX proj = D3DXMATRIX(
+	//		projXM._11, projXM._12, projXM._13, projXM._14,
+	//		projXM._21, projXM._22, projXM._23, projXM._24,
+	//		projXM._31, projXM._32, projXM._33, projXM._34,
+	//		projXM._41, projXM._42, projXM._43, projXM._44 );
+	//	XMStoreFloat4x4( &mViewProjInverseMatrXM, XMMatrixInverse( &XMMatrixDeterminant( mCamera.ViewProj() ), mCamera.ViewProj() ) );
+	//	D3DXMATRIX mViewProjInverseMatr = D3DXMATRIX(
+	//		mViewProjInverseMatrXM._11, mViewProjInverseMatrXM._12, mViewProjInverseMatrXM._13, mViewProjInverseMatrXM._14,
+	//		mViewProjInverseMatrXM._21, mViewProjInverseMatrXM._22, mViewProjInverseMatrXM._23, mViewProjInverseMatrXM._24,
+	//		mViewProjInverseMatrXM._31, mViewProjInverseMatrXM._32, mViewProjInverseMatrXM._33, mViewProjInverseMatrXM._34,
+	//		mViewProjInverseMatrXM._41, mViewProjInverseMatrXM._42, mViewProjInverseMatrXM._43, mViewProjInverseMatrXM._44 );
+
+	//	float fSceneExtent = 200;
+
+	//	SFrameAttribs frameAttribs;
+	//	frameAttribs.pd3dDevice = pd3dDevice;
+	//	frameAttribs.pd3dDeviceContext = pd3dImmediateContext;
+
+	//	frameAttribs.LightAttribs.f4DirectionOnSun = D3DXVECTOR4(vDirectionOnSun.x, vDirectionOnSun.y, vDirectionOnSun.z, 0);
+	//	
+	//	mLightSctrPostProcess->ComputeSunColor( vDirectionOnSun, frameAttribs.LightAttribs.f4SunColorAndIntensityAtGround, frameAttribs.LightAttribs.f4AmbientLight );
+	//	frameAttribs.LightAttribs.f4SunColorAndIntensityAtGround.w = 12.0f; // Sun intensity
+	//	
+	//	// Det senaste jag provade var att skifta near och far plane här och i RenderDirectionalLight så shadow map blir inverterad (eftersom det är
+	//	// sådan shadow map sample koden använder), men det fungerar bara delvis...
+	//	D3DXMATRIX lightView, lightProj;
+	//	D3DXMatrixLookAtLH( &lightView, &vDirectionOnSun, &D3DXVECTOR3(0, 0, 0), &D3DXVECTOR3(0, 1, 0) );
+	//	D3DXMatrixOrthoLH( &lightProj, 100, 100, 0.1f, 1000.0f );
+	//	D3DXMATRIX worldToLightProj = lightView * lightProj;
+	//	D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightViewT, &lightView );
+	//	D3DXMatrixTranspose( &frameAttribs.LightAttribs.mLightProjT, &lightProj );
+	//	D3DXMatrixTranspose( &frameAttribs.LightAttribs.mWorldToLightProjSpaceT, &worldToLightProj );
+	//	D3DXMATRIX cameraProjToLightProj = mViewProjInverseMatr * worldToLightProj;
+	//	D3DXMatrixTranspose( &frameAttribs.LightAttribs.mCameraProjToLightProjSpaceT, &cameraProjToLightProj );
+
+	//	XMFLOAT4X4 viewProjXM;
+	//	XMStoreFloat4x4( &viewProjXM, mCamera.ViewProj() );
+	//	D3DXMATRIX viewProj = D3DXMATRIX(
+	//		viewProjXM._11, viewProjXM._12, viewProjXM._13, viewProjXM._14,
+	//		viewProjXM._21, viewProjXM._22, viewProjXM._23, viewProjXM._24,
+	//		viewProjXM._31, viewProjXM._32, viewProjXM._33, viewProjXM._34,
+	//		viewProjXM._41, viewProjXM._42, viewProjXM._43, viewProjXM._44 );
+
+	//	// Calculate location of the sun on the screen
+	//	D3DXVECTOR4 &f4LightPosPS = frameAttribs.LightAttribs.f4LightScreenPos;
+	//	D3DXVec4Transform(&f4LightPosPS, &frameAttribs.LightAttribs.f4DirectionOnSun, &viewProj);
+	//	f4LightPosPS /= f4LightPosPS.w;
+	//	float fDistToLightOnScreen = D3DXVec2Length( (D3DXVECTOR2*)&f4LightPosPS );
+	//	float fMaxDist = 100;
+	//	if( fDistToLightOnScreen > fMaxDist )
+	//	    (D3DXVECTOR2&)f4LightPosPS *= fMaxDist/fDistToLightOnScreen;
+
+	//	frameAttribs.LightAttribs.bIsLightOnScreen = abs(f4LightPosPS.x) <= 1 && abs(f4LightPosPS.y) <= 1;
+
+	//	// Compute camera UV in shadow map
+	//	D3DXVECTOR3 f3CameraPosInLightProjSpace;
+	//	D3DXMATRIX mWorldToLightProjSpace;
+	//	D3DXVec3TransformCoord(&f3CameraPosInLightProjSpace, &D3DXVECTOR3(CameraPos.x, CameraPos.y, CameraPos.z), &worldToLightProj);
+	//	(D3DXVECTOR2&)frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap = D3DXVECTOR2(0.5f + 0.5f*f3CameraPosInLightProjSpace.x, 0.5f - 0.5f * f3CameraPosInLightProjSpace.y);
+	//	frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.z = f3CameraPosInLightProjSpace.z;
+	//	frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.w = 0;
+
+	//	frameAttribs.CameraAttribs.f4CameraPos = D3DXVECTOR4(CameraPos.x, CameraPos.y, CameraPos.z, 0);            ///< Camera world position
+	//	D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewT, &view );
+	//	D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mProjT, &proj );
+	//	D3DXMatrixTranspose( &frameAttribs.CameraAttribs.mViewProjInvT, &mViewProjInverseMatr );
+
+	//	frameAttribs.ptex2DSrcColorBufferSRV = mCompositeSRV;
+ //       frameAttribs.ptex2DDepthBufferSRV    = mMainDepthSRV;
+ //       frameAttribs.ptex2DShadowMapSRV      = mShadowMap->DepthMapSRV();
+ //       frameAttribs.pDstRTV                 = rtv;
+ //       frameAttribs.pDstDSV                 = 0;
+	//	ID3D11ShaderResourceView *srv = 0;
+	//	frameAttribs.ptex2DStainedGlassSRV	 = srv;
+
+	//	SPostProcessingAttribs ppAttribs;
+	//	ppAttribs.m_fMaxTracingDistance = fSceneExtent * 0.8f;
+	//	ppAttribs.m_fDistanceScaler = 60000.0f / ppAttribs.m_fMaxTracingDistance;
+
+	//	ppAttribs.m_uiMaxShadowMapStep = mShadowMap->Resolution() / 32;
+	//	ppAttribs.m_f2ShadowMapTexelSize = D3DXVECTOR2( 1.0f / static_cast<float>(mShadowMap->Resolution()), 1.0f / static_cast<float>(mShadowMap->Resolution()) );
+	//	ppAttribs.m_uiShadowMapResolution = mShadowMap->Resolution();
+	//	ppAttribs.m_uiMinMaxShadowMapResolution = mShadowMap->Resolution();
+	//	
+	//	ppAttribs.m_uiNumEpipolarSlices = 1024;
+	//	ppAttribs.m_uiMaxSamplesInSlice = 512;
+	//	ppAttribs.m_uiInitialSampleStepInSlice = 16;
+	//	ppAttribs.m_uiEpipoleSamplingDensityFactor = 4;
+	//	ppAttribs.m_fRefinementThreshold = 20.f;
+	//	ppAttribs.m_fDownscaleFactor = 1.f;
+	//	ppAttribs.m_bShowSampling = FALSE;
+	//	ppAttribs.m_bRefineInsctrIntegral = FALSE;
+	//	ppAttribs.m_bMinMaxShadowMapOptimization = TRUE;
+	//	ppAttribs.m_bCorrectScatteringAtDepthBreaks = TRUE;
+	//	ppAttribs.m_bOptimizeSampleLocations = TRUE;
+	//	ppAttribs.m_bShowDepthBreaks = FALSE;
+	//	ppAttribs.m_bStainedGlass = FALSE;
+	//	ppAttribs.m_bShowLightingOnly = FALSE;
+	//	
+	//	mLightSctrPostProcess->PerformPostProcessing(frameAttribs, ppAttribs);
+
+	//	// These are changed in the post process.
+	//	pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
+	//	pd3dImmediateContext->RSSetState( 0 );
+	//	pd3dImmediateContext->OMSetBlendState( 0, 0, 0xFFFFFFFF );
+	//}
+	//{
+	//	// Get the camera position
+	//	XMMATRIX CameraWorld = XMMatrixInverse( &XMMatrixDeterminant( mCamera.View() ), mCamera.View() );
+	//	XMFLOAT3 CameraPos = *(XMFLOAT3*)&CameraWorld._41;
+
+	//	XMFLOAT3 lightPosition(0, 2, 0);
+
+	//	// Hardcoded directional light values
+	//	XMFLOAT3 dirOnLight;
+	//	XMVECTOR dirOnLightXM = XMVectorSet(-0, -(-1), -1, 0);
+	//	dirOnLightXM = XMVector3Normalize(dirOnLightXM);
+	//	XMStoreFloat3(&dirOnLight, dirOnLightXM);
+
+	//	XMFLOAT4 lightColorAndIntensity, ambientLight;
+	//	mLightSctrPostProcess->ComputeSunColor( dirOnLight, lightColorAndIntensity, ambientLight );
+
+	//	SFrameAttribs frameAttribs;
+	//	frameAttribs.pd3dDevice = pd3dDevice;
+	//	frameAttribs.pd3dDeviceContext = pd3dImmediateContext;
+
+	//	frameAttribs.LightAttribs.f4DirOnLight = XMFLOAT4(dirOnLight.x, dirOnLight.y, dirOnLight.z, 0);
+	//	frameAttribs.LightAttribs.f4LightWorldPos = XMFLOAT4(lightPosition.x, lightPosition.y, lightPosition.z, 1);
+	//	frameAttribs.LightAttribs.f4LightColorAndIntensity = lightColorAndIntensity;
+	//	frameAttribs.LightAttribs.f4LightColorAndIntensity.w = 12.0f; // light intensity
+	//	frameAttribs.LightAttribs.f4AmbientLight = ambientLight;
+
+	//	XMMATRIX lightView = XMMatrixLookAtLH( XMLoadFloat4( &frameAttribs.LightAttribs.f4LightWorldPos ), XMVectorSet( 0, 0, 0, 0 ), XMVectorSet( 0, 1, 0, 0 ) );
+	//	XMMATRIX lightProj = XMMatrixOrthographicLH( 100, 100, 0.1f, 1000.0f );
+	//	XMMATRIX worldToLightProj = XMMatrixMultiply( lightView, lightProj );
+	//	XMMATRIX cameraViewProjInverse = XMMatrixInverse(&XMMatrixDeterminant(mCamera.ViewProj()), mCamera.ViewProj());
+	//	XMMATRIX cameraProjToLightProj = cameraViewProjInverse * worldToLightProj;
+	//	XMStoreFloat4x4( &frameAttribs.LightAttribs.mLightViewT, XMMatrixTranspose( lightView ) );
+	//	XMStoreFloat4x4( &frameAttribs.LightAttribs.mLightProjT, XMMatrixTranspose( lightProj ) );
+	//	XMStoreFloat4x4( &frameAttribs.LightAttribs.mWorldToLightProjSpaceT, XMMatrixTranspose( worldToLightProj ) );
+	//	XMStoreFloat4x4( &frameAttribs.LightAttribs.mCameraProjToLightProjSpaceT, XMMatrixTranspose( cameraProjToLightProj ) );
+
+	//	// Calculate location of the sun on the screen
+ //       XMFLOAT4 &f4LightPosPS = frameAttribs.LightAttribs.f4LightScreenPos;
+	//	XMStoreFloat4( &f4LightPosPS, XMVector4Transform( XMLoadFloat4( &frameAttribs.LightAttribs.f4DirOnLight ), mCamera.ViewProj() ) );
+	//	f4LightPosPS.x /= f4LightPosPS.w;
+	//	f4LightPosPS.y /= f4LightPosPS.w;
+	//	f4LightPosPS.z /= f4LightPosPS.w;
+	//	f4LightPosPS.w = 1.0f;
+	//	float fDistToLightOnScreen = XMVectorGetX( XMVector2Length( XMLoadFloat2( (XMFLOAT2*)&f4LightPosPS ) ) );
+ //       float fMaxDist = 100;
+	//	if( fDistToLightOnScreen > fMaxDist )
+	//	{
+	//		f4LightPosPS.x *= fMaxDist / fDistToLightOnScreen;
+	//		f4LightPosPS.y *= fMaxDist / fDistToLightOnScreen;
+	//	}
+
+	//	frameAttribs.LightAttribs.bIsLightOnScreen = abs(f4LightPosPS.x) <= 1 && abs(f4LightPosPS.y) <= 1;
+
+	//	// Compute camera UV in shadow map
+ //       XMFLOAT4 f4CameraPosInLightProjSpace;
+ //       XMVECTOR f4CameraPos = XMVectorSet( CameraPos.x, CameraPos.y, CameraPos.z, 1 );
+	//	XMStoreFloat4( &f4CameraPosInLightProjSpace, XMVector4Transform( f4CameraPos, worldToLightProj ) );
+	//	f4CameraPosInLightProjSpace.x /= f4CameraPosInLightProjSpace.w;
+	//	f4CameraPosInLightProjSpace.y /= f4CameraPosInLightProjSpace.w;
+	//	f4CameraPosInLightProjSpace.z /= f4CameraPosInLightProjSpace.w;
+	//	(XMFLOAT2&)frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap = XMFLOAT2(0.5f + 0.5f*f4CameraPosInLightProjSpace.x, 0.5f - 0.5f * f4CameraPosInLightProjSpace.y);
+ //       frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.z = f4CameraPosInLightProjSpace.z;
+ //       frameAttribs.LightAttribs.f4CameraUVAndDepthInShadowMap.w = f4CameraPosInLightProjSpace.w;
+
+	//	frameAttribs.CameraAttribs.f4CameraPos = XMFLOAT4(CameraPos.x, CameraPos.y, CameraPos.z, 0);
+	//	XMStoreFloat4x4( &frameAttribs.CameraAttribs.mViewT, XMMatrixTranspose( mCamera.View() ) );
+	//	XMStoreFloat4x4( &frameAttribs.CameraAttribs.mProjT, XMMatrixTranspose( mCamera.Proj() ) );
+	//	XMStoreFloat4x4( &frameAttribs.CameraAttribs.mViewProjInvT, XMMatrixTranspose( cameraViewProjInverse ) );
+	//	
+	//	frameAttribs.ptex2DSrcColorBufferSRV = mCompositeSRV;
+ //       frameAttribs.ptex2DDepthBufferSRV    = mMainDepthSRV;
+ //       frameAttribs.ptex2DShadowMapSRV      = mShadowMap->DepthMapSRV();
+ //       frameAttribs.pDstRTV                 = rtv;
+ //       frameAttribs.pDstDSV                 = 0;
+	//	ID3D11ShaderResourceView *srv = 0;
+	//	frameAttribs.ptex2DStainedGlassSRV	 = srv;
+
+	//	SPostProcessingAttribs ppAttribs;
+	//	ppAttribs.m_bAnisotropicPhaseFunction = FALSE;
+	//	ppAttribs.m_bCorrectScatteringAtDepthBreaks = TRUE;
+	//	ppAttribs.m_bOptimizeSampleLocations = TRUE;
+	//	ppAttribs.m_bShowDepthBreaks = FALSE;
+	//	ppAttribs.m_bShowLightingOnly = FALSE;
+	//	ppAttribs.m_bShowSampling = FALSE;
+	//	ppAttribs.m_bStainedGlass = FALSE;
+	//	
+	//	float fSceneExtent = 80;
+	//	ppAttribs.m_fMaxTracingDistance = fSceneExtent * 1.5f;
+	//	ppAttribs.m_fDistanceScaler = 60000.f / ppAttribs.m_fMaxTracingDistance;
+	//	
+	//	ppAttribs.m_uiMaxShadowMapStep = mShadowMap->Resolution() / 32;
+	//	ppAttribs.m_f2ShadowMapTexelSize = XMFLOAT2(1.0f/static_cast<float>(mShadowMap->Resolution()), 1.0f/static_cast<float>(mShadowMap->Resolution()));
+	//	ppAttribs.m_uiShadowMapResolution = mShadowMap->Resolution();
+	//	ppAttribs.m_uiMinMaxShadowMapResolution = mShadowMap->Resolution();
+
+	//	//float mieX = SPostProcessingAttribs().m_f4MieBeta.x;
+	//	//XMFLOAT4 f4MieColor = XMFLOAT4( ppAttribs.m_f4MieBeta.x / mieX, ppAttribs.m_f4MieBeta.y / mieX, ppAttribs.m_f4MieBeta.z / mieX, ppAttribs.m_f4MieBeta.w / mieX );
+	//	//mieX = SPostProcessingAttribs().m_f4MieBeta.x;
+	//	//ppAttribs.m_f4MieBeta = XMFLOAT4( f4MieColor.x * mieX, f4MieColor.y * mieX, f4MieColor.z * mieX, f4MieColor.w * mieX );
+	//	//float rlghZ = SPostProcessingAttribs().m_f4RayleighBeta.z;
+	//	//XMFLOAT4 f4RlghColor = XMFLOAT4( ppAttribs.m_f4RayleighBeta.x / rlghZ, ppAttribs.m_f4RayleighBeta.y / rlghZ, ppAttribs.m_f4RayleighBeta.z / rlghZ, ppAttribs.m_f4RayleighBeta.w / rlghZ );
+	//	//rlghZ = SPostProcessingAttribs().m_f4RayleighBeta.z;
+	//	//ppAttribs.m_f4RayleighBeta = XMFLOAT4( f4RlghColor.x * rlghZ, f4RlghColor.y * rlghZ, f4RlghColor.z * rlghZ, f4RlghColor.w * rlghZ );
+	//	//ppAttribs.m_fDownscaleFactor = 1.f;
+	//	//ppAttribs.m_fExposure = 1.f;
+	//	//ppAttribs.m_fRefinementThreshold = 20.f;
+	//	//ppAttribs.m_uiAccelStruct = 1;
+	//	//ppAttribs.m_uiEpipoleSamplingDensityFactor = 4;
+	//	//ppAttribs.m_uiInitialSampleStepInSlice = 16;
+	//	//ppAttribs.m_uiInsctrIntglEvalMethod = 0;
+	//	//ppAttribs.m_uiLightSctrTechnique = 0;
+	//	//ppAttribs.m_uiLightType = 0;
+	//	//ppAttribs.m_uiMaxSamplesInSlice = 512;
+	//	//ppAttribs.m_uiNumEpipolarSlices = 1024;
+	//	
+	//	mLightSctrPostProcess->PerformPostProcessing(frameAttribs, ppAttribs);
+
+	//	// These are changed in the post process.
+	//	pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
+	//	pd3dImmediateContext->RSSetState( 0 );
+	//	pd3dImmediateContext->OMSetBlendState( 0, 0, 0xFFFFFFFF );
+	//}
 
 	//
 	// Generate an old-film looking effect
@@ -696,15 +848,15 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//}
 
 	// Render a full screen triangle to place content of CompositeSRV on the back buffer.
-	//{
-	//	mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
+	{
+		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
 
-	//	mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//	pd3dImmediateContext->Draw( 3, 0 );
+		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 3, 0 );
 
-	//	mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
-	//	mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//}
+		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource( 0 );
+		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	}
 
 	//
 	// Full-screen textured quad
@@ -725,7 +877,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// and how many of those to draw.
 		ID3D11ShaderResourceView *srvs[4] = {
 			//mSSAO->AOMap(),
-			mShadowMap->DepthMapSRV(),
+			//mShadowMap->DepthMapSRV(),
+			//mLightScatterPostProcess->CameraSpaceZ(),
+			mLightScatterPostProcess->SliceEndpoints(),
+			//mMainDepthSRV,
 			mGBuffer->NormalSRV(),
 			mLightSRV,
 			mGBuffer->ColorSRV()
@@ -753,7 +908,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		for (int i = 0; i < numImages; ++i)
 		{
 			ID3DX11EffectTechnique *tech = 0;
-			if (srvs[i] == mSSAO->AOMap() || srvs[i] == mMainDepthSRV)
+			if (srvs[i] == mSSAO->AOMap() || srvs[i] == mMainDepthSRV || srvs[i] == mLightScatterPostProcess->CameraSpaceZ())
 				tech = mFullscreenTextureFX->GetTechniqueByName("SingleChannel");
 			else
 				tech = mFullscreenTextureFX->GetTechniqueByName("MultiChannel");
