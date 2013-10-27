@@ -151,6 +151,9 @@
     <None Include="Shaders\LightScatter.fx">
       <Filter>Application\LightScatterPostProcess</Filter>
     </None>
+    <None Include="Shaders\RefineSampleLocations.fx">
+      <Filter>Application\LightScatterPostProcess</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">

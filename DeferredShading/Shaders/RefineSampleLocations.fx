@@ -1,3 +1,6 @@
+float4 gLightScreenPos;
+uint gMaxSamplesInSlice;
+
 #ifndef INITIAL_SAMPLE_STEP
 #	define INITIAL_SAMPLE_STEP 128
 #endif

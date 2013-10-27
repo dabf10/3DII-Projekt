@@ -1,9 +1,12 @@
 #include "LightScatterPostProcess.h"
+#include <sstream>
 
 LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	UINT backBufferWidth, UINT backBufferHeight, UINT maxSamplesInSlice,
-	UINT numEpipolarSlices ) :
+	UINT numEpipolarSlices, UINT initialSampleStepInSlice, float refinementThreshold,
+	UINT epipoleSamplingDensityFactor ) :
 	mLightScatterFX( 0 ),
+	mRefineSampleLocationsFX( 0 ),
 	mDisableDepthTestDS( 0 ),
 	mDisableDepthTestIncrStencilDS( 0 ),
 	mSolidFillNoCullRS( 0 ),
@@ -17,13 +20,26 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mEpipolarCamSpaceZRTV( 0 ),
 	mEpipolarCamSpaceZSRV( 0 ),
 	mEpipolarImageDSV( 0 ),
+	mInterpolationSourceSRV( 0 ),
+	mInterpolationSourceUAV( 0 ),
 	mMaxSamplesInSlice( maxSamplesInSlice ),
-	mNumEpipolarSlices( numEpipolarSlices )
+	mNumEpipolarSlices( numEpipolarSlices ),
+	mInitialSampleStepInSlice( initialSampleStepInSlice ),
+	mRefinementThreshold( refinementThreshold ),
+	mEpipoleSamplingDensityFactor( epipoleSamplingDensityFactor )
 {
+	UINT sampleRefinementCSMinimumThreadGroupSize = 128; // Must be greater than 32
+	// Thread group size must be at least as large as initial sample step.
+	mSampleRefinementCSThreadGroupSize = max( sampleRefinementCSMinimumThreadGroupSize, initialSampleStepInSlice );
+	// Thread group size cannot be larger than the total number of samples in slice.
+	mSampleRefinementCSThreadGroupSize = min( mSampleRefinementCSThreadGroupSize, maxSamplesInSlice );
+
 	CompileShader( pd3dDevice, "Shaders/LightScatter.fx", &mLightScatterFX );
+	CompileShader( pd3dDevice, "Shaders/RefineSampleLocations.fx", &mRefineSampleLocationsFX );
 	mReconstructCameraSpaceZTech = mLightScatterFX->GetTechniqueByName("ReconstructCameraSpaceZ");
 	mGenerateSliceEndpointsTech = mLightScatterFX->GetTechniqueByName("GenerateSliceEndpoints");
 	mRenderCoordinateTextureTech = mLightScatterFX->GetTechniqueByName("GenerateCoordinateTexture");
+	mRefineSampleLocationsTech = mRefineSampleLocationsFX->GetTechniqueByName("RefineSampleLocations");
 
 	//
 	// Create states
@@ -77,6 +93,7 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 LightScatterPostProcess::~LightScatterPostProcess( void )
 {
 	SAFE_RELEASE( mLightScatterFX );
+	SAFE_RELEASE( mRefineSampleLocationsFX );
 
 	SAFE_RELEASE( mDisableDepthTestDS );
 	SAFE_RELEASE( mDisableDepthTestIncrStencilDS );
@@ -92,6 +109,8 @@ LightScatterPostProcess::~LightScatterPostProcess( void )
 	SAFE_RELEASE( mEpipolarCamSpaceZRTV );
 	SAFE_RELEASE( mEpipolarCamSpaceZSRV );
 	SAFE_RELEASE( mEpipolarImageDSV );
+	SAFE_RELEASE( mInterpolationSourceSRV );
+	SAFE_RELEASE( mInterpolationSourceUAV );
 }
 
 void LightScatterPostProcess::Resize( ID3D11Device *pd3dDevice, UINT width, UINT height )
@@ -168,7 +187,16 @@ void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice )
 	}
 
 	{
-		// INTERPOLATIONSOURCES HERE
+		SAFE_RELEASE( mInterpolationSourceSRV );
+		SAFE_RELEASE( mInterpolationSourceUAV );
+		D3D11_TEXTURE2D_DESC interpolationSourceTexDesc = coordinateTexDesc;
+		interpolationSourceTexDesc.Format = DXGI_FORMAT_R16G16_UINT;
+		interpolationSourceTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		ID3D11Texture2D *interpolationSource;
+		V( pd3dDevice->CreateTexture2D( &interpolationSourceTexDesc, NULL, &interpolationSource ) );
+		V( pd3dDevice->CreateShaderResourceView( interpolationSource, NULL, &mInterpolationSourceSRV ) );
+		V( pd3dDevice->CreateUnorderedAccessView( interpolationSource, NULL, &mInterpolationSourceUAV ) );
+		SAFE_RELEASE( interpolationSource );
 	}
 	
 	{
@@ -208,6 +236,9 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	ID3D11ShaderResourceView *sceneDepth, CXMMATRIX cameraProj, XMFLOAT2 screenResolution,
 	XMFLOAT4 lightScreenPos )
 {
+	mRefineSampleLocationsFX->GetVariableByName("gLightScreenPos")->AsVector()->SetFloatVector((float*)&lightScreenPos);
+	mRefineSampleLocationsFX->GetVariableByName("gMaxSamplesInSlice")->AsScalar()->SetInt(mMaxSamplesInSlice);
+
 	mLightScatterFX->GetVariableByName("gCameraProj")->AsMatrix()->SetMatrix((float*)&cameraProj);
 	mLightScatterFX->GetVariableByName("gNumEpipolarSlices")->AsScalar()->SetInt(mNumEpipolarSlices);
 	mLightScatterFX->GetVariableByName("gScreenResolution")->AsVector()->SetFloatVector((float*)&screenResolution);
@@ -228,7 +259,7 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	RenderCoordinateTexture( pd3dDeviceContext );
 
 	// Step 3: Refine sample locations (initial ray marching samples)
-	RefineSampleLocations( );
+	RefineSampleLocations( pd3dDeviceContext );
 }
 
 void LightScatterPostProcess::ReconstructCameraSpaceZ( ID3D11DeviceContext *pd3dDeviceContext,
@@ -336,9 +367,21 @@ void LightScatterPostProcess::RenderCoordinateTexture( ID3D11DeviceContext *pd3d
 	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
 }
 
-void LightScatterPostProcess::RefineSampleLocations( void )
+void LightScatterPostProcess::RefineSampleLocations( ID3D11DeviceContext *pd3dDeviceContext )
 {
+	mRefineSampleLocationsFX->GetVariableByName("gCoordinates")->AsShaderResource()->SetResource( mCoordinateTextureSRV );
+	mRefineSampleLocationsFX->GetVariableByName("gEpipolarCamSpaceZ")->AsShaderResource()->SetResource( mEpipolarCamSpaceZSRV );
+	mRefineSampleLocationsFX->GetVariableByName("gInterpolationSource")->AsUnorderedAccessView()->SetUnorderedAccessView( mInterpolationSourceUAV );
+	mRefineSampleLocationsFX->GetTechniqueByName("RefineSampleLocations")->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+	
+	pd3dDeviceContext->Dispatch( mMaxSamplesInSlice / mSampleRefinementCSThreadGroupSize,
+								 mNumEpipolarSlices,
+								 1 );
 
+	mRefineSampleLocationsFX->GetVariableByName("gCoordinates")->AsShaderResource()->SetResource( 0 );
+	mRefineSampleLocationsFX->GetVariableByName("gEpipolarCamSpaceZ")->AsShaderResource()->SetResource( 0 );
+	mRefineSampleLocationsFX->GetVariableByName("gInterpolationSource")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mRefineSampleLocationsFX->GetTechniqueByName("RefineSampleLocations")->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
 }
 
 void LightScatterPostProcess::CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx )
@@ -352,8 +395,25 @@ void LightScatterPostProcess::CompileShader( ID3D11Device *pd3dDevice, const cha
 	ID3D10Blob *errorMsgs;
 	HRESULT hr;
 
-	hr = D3DX11CompileFromFileA( filename, 0, 0, "", "fx_5_0", shaderFlags, 0, 0,
-		&compiledShader, &errorMsgs, 0 );
+	if (filename == "Shaders/RefineSampleLocations.fx")
+	{
+		std::stringstream ss1, ss2;
+		std::string def1, def2;
+		ss1 << mInitialSampleStepInSlice;
+		ss2 << mSampleRefinementCSThreadGroupSize;
+		def1 = ss1.str();
+		def2 = ss2.str();
+
+		D3D10_SHADER_MACRO shaderMacros[3] = { "INITIAL_SAMPLE_STEP", def1.c_str(), "THREAD_GROUP_SIZE", def2.c_str(), NULL, NULL };
+		
+		hr = D3DX11CompileFromFileA( filename, shaderMacros, 0, "", "fx_5_0", shaderFlags, 0, 0,
+			&compiledShader, &errorMsgs, 0 );
+	}
+	else
+	{
+		hr = D3DX11CompileFromFileA( filename, 0, 0, "", "fx_5_0", shaderFlags, 0, 0,
+			&compiledShader, &errorMsgs, 0 );
+	}
 
 	// errorMsgs can store errors or warnings.
 	if (errorMsgs)

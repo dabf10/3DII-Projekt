@@ -146,6 +146,7 @@ private:
 	// Final image
 	ID3D11RenderTargetView *mCompositeRT;
 	ID3D11ShaderResourceView *mCompositeSRV;
+	ID3D11UnorderedAccessView *mCompositeUAV;
 
 	ID3DX11Effect *mFullscreenTextureFX;
 

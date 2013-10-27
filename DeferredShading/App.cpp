@@ -20,6 +20,7 @@ App::App() :
 	mMainDepthSRV( 0 ),
 	mCompositeRT( 0 ),
 	mCompositeSRV( 0 ),
+	mCompositeUAV( 0 ),
 	mFullscreenTextureFX( 0 ),
 	mFillGBufferFX( 0 ),
 	mDirectionalLightFX( 0 ),
@@ -168,7 +169,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
 	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice,
-		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024 );
+		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024,
+		16, 20.0f, 4 );
     
 	return S_OK;
 }
@@ -284,6 +286,7 @@ void App::OnD3D11ReleasingSwapChain( )
 	SAFE_RELEASE( mMainDepthSRV );
 	SAFE_RELEASE( mCompositeRT );
 	SAFE_RELEASE( mCompositeSRV );
+	SAFE_RELEASE( mCompositeUAV );
 	SAFE_DELETE( mSSAO );
 	SAFE_DELETE( mGBuffer );
 	SAFE_DELETE( mShadowMap );
@@ -538,23 +541,47 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mMainDepthSRV, mGBuffer->NormalSRV(), mCamera.Proj(), pd3dImmediateContext );
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
-	pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
 
 	//
 	// Render a full-screen quad that combines the light from the light map
 	// with the color map from the G-Buffer
 	//
-	{		
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
+	{
+		//
+		// Full screen triangle using pixel shader
+		//
+		pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
 
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
+		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( mLightSRV );
+
+		mCombineLightFX->GetTechniqueByName("FullscreenUsingPixelShader")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		pd3dImmediateContext->Draw( 3, 0 );
 
 		// Unbind shader resources
 		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mCombineLightFX->GetTechniqueByName("FullscreenUsingPixelShader")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+		//
+		// Compute shader
+		//
+		//pd3dImmediateContext->OMSetRenderTargets( 0, 0, 0 );
+
+		//mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
+		//mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( mLightSRV );
+		//mCombineLightFX->GetVariableByName("gComposite")->AsUnorderedAccessView()->SetUnorderedAccessView( mCompositeUAV );
+
+		//mCombineLightFX->GetTechniqueByName("UsingComputeShader")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		//pd3dImmediateContext->Dispatch( ceilf(mBackBufferSurfaceDesc->Width / 16.0f),
+		//								ceilf(mBackBufferSurfaceDesc->Height / 16.0f),
+		//								1 );
+
+		//// Unbind shader resources
+		//mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+		//mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
+		//mCombineLightFX->GetVariableByName("gComposite")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+		//mCombineLightFX->GetTechniqueByName("UsingComputeShader")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	}
 
 	// Render to back buffer.
@@ -881,7 +908,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			//mLightScatterPostProcess->CameraSpaceZ(),
 			//mLightScatterPostProcess->SliceEndpoints(),
 			//mLightScatterPostProcess->CoordinateTexture(),
-			mLightScatterPostProcess->EpipolarCamSpaceZ(),
+			//mLightScatterPostProcess->EpipolarCamSpaceZ(),
+			mLightScatterPostProcess->InterpolationSource(),
 			//mMainDepthSRV,
 			mGBuffer->NormalSRV(),
 			mLightSRV,
@@ -1242,9 +1270,12 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	// intermediate one? It seems strange though, to use a resource as both
 	// render target and shader input at the same time.
 	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	texDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
 	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mCompositeRT ) );
 	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mCompositeSRV ) );
+	V_RETURN( device->CreateUnorderedAccessView( tex, NULL, &mCompositeUAV ) );
+	texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
 
 	// Views saves reference
 	SAFE_RELEASE( tex );

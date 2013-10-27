@@ -277,4 +277,3 @@ technique11 GenerateCoordinateTexture
 		SetPixelShader( CompileShader( ps_4_0, GenerateCoordinateTexturePS() ) );
 	}
 }
-

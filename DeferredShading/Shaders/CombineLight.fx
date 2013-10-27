@@ -6,6 +6,7 @@
 
 Texture2D gColorMap;
 Texture2D gLightMap;
+RWTexture2D<unorm float4> gComposite; // For compute shader
 
 SamplerState gColorSampler
 {
@@ -53,12 +54,35 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	//return float4((diffuseColor * diffuseLight * specularLight), 1); // Intressant effekt :)
 }
 
-technique11 Technique0
+[numthreads(16, 16, 1)]
+void CS( int3 dispatchThreadID : SV_DispatchThreadID )
+{
+	float3 diffuseColor = gColorMap[dispatchThreadID.xy].rgb;
+	float4 light = gLightMap[dispatchThreadID.xy];
+	float3 diffuseLight = light.rgb;
+	float specularLight = light.a;
+	
+	gComposite[dispatchThreadID.xy] = float4((diffuseColor * diffuseLight + specularLight), 1);
+	//gComposite[dispatchThreadID.xy] = float4((diffuseColor * diffuseLight * specularLight), 1); // Intressant effekt :)
+}
+
+technique11 FullscreenUsingPixelShader
 {
 	pass p0
 	{
 		SetVertexShader( CompileShader( vs_4_0, VS() ) );
 		SetGeometryShader( NULL );
 		SetPixelShader( CompileShader( ps_4_0, PS() ) );
+	}
+}
+
+technique11 UsingComputeShader
+{
+	pass p0
+	{
+		SetVertexShader( NULL );
+		SetGeometryShader( NULL );
+		SetPixelShader( NULL );
+		SetComputeShader( CompileShader( cs_5_0, CS() ) );
 	}
 }

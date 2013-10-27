@@ -432,6 +432,7 @@
     <None Include="Shaders\LightScatter.fx" />
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />
+    <None Include="Shaders\RefineSampleLocations.fx" />
     <None Include="Shaders\Shadow.fx" />
     <None Include="Shaders\Spotlight.fx" />
     <None Include="Shaders\SSAO.fx" />
