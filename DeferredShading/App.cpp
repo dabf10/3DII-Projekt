@@ -170,7 +170,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
 	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice,
 		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024,
-		16, 20.0f, 4 );
+		16, 20.0f, 4, 0 );
     
 	return S_OK;
 }
@@ -588,12 +588,28 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
 	{
-		XMVECTOR dirOnLight = XMVector3Normalize(XMVectorSet(-0, -(-1), -1, 0));
-		XMFLOAT4 lightScreenPos;
-		XMStoreFloat4( &lightScreenPos, XMVector4Transform( dirOnLight, mCamera.ViewProj() ) );
+		XMVECTOR dirOnLightXM = XMVector3Normalize(XMVectorSet(-0, -(-1), -1, 0));
+		XMFLOAT4 lightScreenPos, dirOnLight, cameraPos;
+		XMStoreFloat4( &dirOnLight, dirOnLightXM );
+		XMStoreFloat4( &lightScreenPos, XMVector4Transform( dirOnLightXM, mCamera.ViewProj() ) );
+		XMStoreFloat4( &cameraPos, mCamera.GetPositionXM() );
+
+		XMMATRIX lightView = XMMatrixLookAtLH( dirOnLightXM, XMVectorSet( 0, 0, 0, 0 ), XMVectorSet( 0, 1, 0, 0 ) );
+		XMMATRIX lightProj = XMMatrixOrthographicLH( 100, 100, 0.1f, 1000.0f );
+		XMMATRIX worldToLightProj = XMMatrixMultiply( lightView, lightProj );
+
+		XMMATRIX viewProjInv = XMMatrixInverse( &XMMatrixDeterminant( mCamera.ViewProj() ), mCamera.ViewProj() );
+
+		XMVECTOR cameraPosInLightProjSpace = XMVector4Transform( mCamera.GetPositionXM(), worldToLightProj );
+		XMFLOAT4 cameraUVAndDepthInShadowMap;
+		(XMFLOAT2&)cameraUVAndDepthInShadowMap = XMFLOAT2(0.5f + 0.5f*XMVectorGetX(cameraPosInLightProjSpace), 0.5f - 0.5f * XMVectorGetY(cameraPosInLightProjSpace));
+		cameraUVAndDepthInShadowMap.z = XMVectorGetZ(cameraPosInLightProjSpace);
+		cameraUVAndDepthInShadowMap.w = XMVectorGetW(cameraPosInLightProjSpace);
 
 		mLightScatterPostProcess->PerformLightScatter( pd3dImmediateContext, mMainDepthSRV, mCamera.Proj(),
-			XMFLOAT2(mBackBufferSurfaceDesc->Width, mBackBufferSurfaceDesc->Height), lightScreenPos );
+			XMFLOAT2(mBackBufferSurfaceDesc->Width, mBackBufferSurfaceDesc->Height), lightScreenPos,
+			viewProjInv, cameraPos, dirOnLight, XMFLOAT4(0, 0, 0, 0), XMFLOAT4(0, 0, 1, 0), worldToLightProj,
+			cameraUVAndDepthInShadowMap );
 
 		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 		pd3dImmediateContext->OMSetDepthStencilState( NULL, 0 );
@@ -909,7 +925,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			//mLightScatterPostProcess->SliceEndpoints(),
 			//mLightScatterPostProcess->CoordinateTexture(),
 			//mLightScatterPostProcess->EpipolarCamSpaceZ(),
-			mLightScatterPostProcess->InterpolationSource(),
+			//mLightScatterPostProcess->InterpolationSource(),
+			mLightScatterPostProcess->SliceUVDirAndOrigin(),
 			//mMainDepthSRV,
 			mGBuffer->NormalSRV(),
 			mLightSRV,

@@ -11,12 +11,15 @@ public:
 	LightScatterPostProcess( ID3D11Device *pd3dDevice, UINT backBufferWidth,
 		UINT backBufferHeight, UINT maxSamplesInSlice, UINT numEpipolarSlices,
 		UINT initialSampleStepInSlice, float refinementThreshold,
-		UINT epipoleSamplingDensityFactor );
+		UINT epipoleSamplingDensityFactor, UINT lightType );
 	~LightScatterPostProcess( void );
 
 	void PerformLightScatter( ID3D11DeviceContext *pd3dDeviceContext,
 		ID3D11ShaderResourceView *sceneDepth, CXMMATRIX cameraProj,
-		XMFLOAT2 screenResolution, XMFLOAT4 lightScreenPos );
+		XMFLOAT2 screenResolution, XMFLOAT4 lightScreenPos, CXMMATRIX viewProjInv,
+		XMFLOAT4 cameraPos, XMFLOAT4 dirOnLight, XMFLOAT4 lightWorldPos,
+		XMFLOAT4 spotLightAxisAndCosAngle, CXMMATRIX worldToLightProj,
+		XMFLOAT4 cameraUVAndDepthInShadowMap );
 
 	void Resize( ID3D11Device *pd3dDevice, UINT width, UINT height );
 
@@ -26,6 +29,7 @@ public:
 	ID3D11ShaderResourceView *EpipolarCamSpaceZ( void ) const { return mEpipolarCamSpaceZSRV; }
 	// InterpolationSource är knepig att verifiera, det verkar inte som att man kan rendera innehållet?
 	ID3D11ShaderResourceView *InterpolationSource( void ) const { return mInterpolationSourceSRV; }
+	ID3D11ShaderResourceView *SliceUVDirAndOrigin( void ) const { return mSliceUVDirAndOriginSRV; }
 
 private:
 	LightScatterPostProcess &operator=( const LightScatterPostProcess &rhs );
@@ -36,6 +40,7 @@ private:
 	void RenderSliceEndpoints( ID3D11DeviceContext *pd3dDeviceContext );
 	void RenderCoordinateTexture( ID3D11DeviceContext *pd3dDeviceContext );
 	void RefineSampleLocations( ID3D11DeviceContext *pd3dDeviceContext );
+	void RenderSliceUVDirection( ID3D11DeviceContext *pd3dDeviceContext );
 
 	void CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx );
 	void CreateTextures( ID3D11Device *pd3dDevice );
@@ -49,6 +54,7 @@ private:
 	UINT mSampleRefinementCSThreadGroupSize;
 	float mRefinementThreshold;
 	UINT mEpipoleSamplingDensityFactor;
+	UINT mLightType;
 
 	// Effect and techniques
 	ID3DX11Effect *mLightScatterFX;
@@ -57,6 +63,7 @@ private:
 	ID3DX11EffectTechnique *mRenderCoordinateTextureTech;
 	ID3DX11Effect *mRefineSampleLocationsFX;
 	ID3DX11EffectTechnique *mRefineSampleLocationsTech;
+	ID3DX11EffectTechnique *mRenderSliceUVDirInSMTech;
 
 	// States
 	ID3D11DepthStencilState *mDisableDepthTestDS;
@@ -76,6 +83,8 @@ private:
 	ID3D11DepthStencilView *mEpipolarImageDSV;
 	ID3D11ShaderResourceView *mInterpolationSourceSRV;
 	ID3D11UnorderedAccessView *mInterpolationSourceUAV;
+	ID3D11RenderTargetView *mSliceUVDirAndOriginRTV;
+	ID3D11ShaderResourceView *mSliceUVDirAndOriginSRV;
 };
 
 #endif // _LIGHT_SCATTER_POST_PROCESS_H_

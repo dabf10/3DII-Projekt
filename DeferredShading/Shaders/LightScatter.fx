@@ -11,6 +11,20 @@ uint gMaxSamplesInSlice;
 Texture2D<float> gCamSpaceZ : register( t0 );
 Texture2D<float4> gSliceEndPoints : register( t4 );
 
+float4x4 gViewProjInv;
+float4 gCameraPos;
+float4 gDirOnLight;
+float4 gLightWorldPos;
+float4 gSpotLightAxisAndCosAngle;
+float4x4 gWorldToLightProj;
+float4 gCameraUVAndDepthInShadowMap;
+#define LIGHT_TYPE_DIRECTIONAL 0
+#define LIGHT_TYPE_SPOT 1
+#define LIGHT_TYPE_POINT 2
+#ifndef LIGHT_TYPE
+#   define LIGHT_TYPE LIGHT_TYPE_DIRECTIONAL
+#endif
+
 SamplerState gSamLinearClamp : register( s0 )
 {
 	Filter = MIN_MAG_MIP_LINEAR;
@@ -275,5 +289,193 @@ technique11 GenerateCoordinateTexture
 		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
 		SetGeometryShader( NULL );
 		SetPixelShader( CompileShader( ps_4_0, GenerateCoordinateTexturePS() ) );
+	}
+}
+
+float3 ProjSpaceXYZToWorldSpace(in float3 posPS)
+{
+	// We need to compute depth before applying view-proj inverse matrix.
+	float depth = gCameraProj[2][2] + gCameraProj[3][2] / posPS.z;
+	float4 reconstructedPosWS = mul( float4(posPS.xy, depth, 1), gViewProjInv );
+	reconstructedPosWS /= reconstructedPosWS.w;
+	return reconstructedPosWS.xyz;
+}
+
+float3 ProjSpaceXYToWorldSpace(in float2 posPS)
+{
+	// We can sample camera space z texture using bilinear filtering.
+	float camSpaceZ = gCamSpaceZ.SampleLevel(gSamLinearClamp, ProjToUV(posPS), 0);
+	return ProjSpaceXYZToWorldSpace(float3(posPS, camSpaceZ));
+}
+
+bool PlanePlaneIntersect(float3 n1, float3 p1, float3 n2, float3 p2,
+						 out float3 lineOrigin, out float3 lineDir)
+{
+	// http://paulbourke.net/geometry/planeplane/
+	float d1 = dot(n1, p1);
+	float d2 = dot(n2, p2);
+	float n1n1 = dot(n1, n1);
+	float n2n2 = dot(n2, n2);
+	float n1n2 = dot(n1, n2);
+
+	float det = n1n1 * n2n2 - n1n2 * n1n2;
+	if (abs(det) < 1e-6)
+		return false;
+
+	float c1 = (d1 * n2n2 - d2 * n1n2) / det;
+	float c2 = (d2 * n1n1 - d1 * n1n2) / det;
+
+	lineOrigin = c1 * n1 + c2 * n2;
+	lineDir = normalize(cross(n1, n2));
+
+	return true;
+}
+
+float2 RayConeIntersect(in float3 coneApex, in float3 coneAxis, in float cosAngle,
+						in float3 rayStart, in float3 rayDir)
+{
+	rayStart -= coneApex;
+	float a = dot(rayDir, coneAxis);
+	float b = dot(rayDir, rayDir);
+	float c = dot(rayStart, coneAxis);
+	float d = dot(rayStart, rayDir);
+	float e = dot(rayStart, rayStart);
+	cosAngle *= cosAngle;
+	float A = a*a - b*cosAngle;
+	float B = 2 * ( c*a - d*cosAngle );
+	float C = c*c - e*cosAngle;
+	float D = B*B - 4*A*C;
+	if (D > 0)
+	{
+		D = sqrt(D);
+		float2 t = (-B + sign(A)*float2(-D,+D)) / (2*A);
+		bool2 isCorrect = c + a * t > 0;
+		t = t * isCorrect + !isCorrect * (-FLT_MAX);
+		return t;
+	}
+	else
+		return -FLT_MAX;
+}
+
+static const float4 gIncorrectSliceUVDirAndStart = float4(-10000, -10000, 0, 0);
+float4 RenderSliceUVDirectionPS( FullScreenTriangleVSOut input ) : SV_TARGET
+{
+	uint sliceIndex = input.PosH.x;
+
+	// Load epipolar slice endpoints.
+	float4 sliceEndpoints = gSliceEndPoints.Load( uint3(sliceIndex, 0, 0) );
+
+	// All correct entry points are completely inside the [-1,1]x[-1,1] area.
+	if (any(abs(sliceEndpoints.xy) > 1))
+		return gIncorrectSliceUVDirAndStart;
+
+	// Reconstruct slice exit point position in world space.
+	float3 sliceExitWS = ProjSpaceXYToWorldSpace(sliceEndpoints.zw);
+	float3 dirToSliceExitFromCamera = normalize(sliceExitWS - gCameraPos.xyz);
+	
+	// Compute epipolar slice normal. If light source is outside the screen, the
+	// could be collinear.
+	float3 sliceNormal = cross(dirToSliceExitFromCamera, gDirOnLight.xyz);
+	if (length(sliceNormal) < 1e-5)
+		return gIncorrectSliceUVDirAndStart;
+	sliceNormal = normalize(sliceNormal);
+
+	// Intersect epipolar slice plane with the light projection plane.
+	float3 intersecOrig, intersecDir;
+
+#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+	// We can use any plane parallel to the light frustum near clip plane. The
+	// exact distance from the plane to light source does not matter since the
+	// projection will always be the same:
+	float3 lightProjPlaneCenter = gLightWorldPos.xyz + gSpotLightAxisAndCosAngle.xyz;
+#endif
+
+	if (!PlanePlaneIntersect(
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+		// In case light is directional, the matrix is not perspective, so location
+		// of the light projection plane in space as well as camera position do not
+		// matter at all.
+		sliceNormal, 0,
+		-gDirOnLight.xyz, 0,
+#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+		sliceNormal, gCameraPos.xyz,
+		gSpotLightAxisAndCosAngle.xyz, lightProjPlaneCenter,
+#endif
+		intersecOrig, intersecDir ))
+	{
+		// There is no correct intersection between planes in barely possible case
+		// which requires that:
+		// 1. gDirOnLight is exactly parallel to light projection plane.
+		// 2. The slice is parallel to light projection plane.
+		return gIncorrectSliceUVDirAndStart;
+	}
+
+	// Important: Ray direction intersecDir is computed as a cross product of slice
+	// normal and light direction (or spot light axis). As a result, the ray
+	// direction is always correct for valid slices.
+
+	// Now project the line onto the light space UV coordinates.
+	// Get two points on the line:
+	float4 p0 = float4( intersecOrig, 1 );
+	float4 p1 = float4( intersecOrig + intersecDir * max(1, length(intersecOrig)), 1);
+
+	// Transform the points into the shadow map UV:
+	p0 = mul( p0, gWorldToLightProj );
+	p0 /= p0.w;
+	p1 = mul( p1, gWorldToLightProj);
+	p1 /= p1.w;
+
+	// Note that division by w is not really necessary because both points lie in
+	// the plane parellel to light projection and thus have the same w value.
+	float2 sliceDir = ProjToUV(p1.xy) - ProjToUV(p0.xy);
+
+	// The followig method also works:
+	// Since we need direction only, we can use any origin. The most convenient is
+	// lightProjPlaneCenter which projects into (0.5, 0.5):
+	// float4 sliceUVDir = mul( float4(lightProjPlaneCenter + intersecDir, 1), gWorldToLightProj);
+	// sliceUVDir /= sliceUVDir.w;
+	// float2 sliceDir = ProjToUV(sliceUVDir.xy) - 0.5;
+
+	sliceDir /= max(abs(sliceDir.x), abs(sliceDir.y));
+
+	float2 sliceOriginUV = gCameraUVAndDepthInShadowMap.xy;
+
+#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+	bool isCamInsideCone = dot( -gDirOnLight.xyz, gSpotLightAxisAndCosAngle.xyz) > gSpotLightAxisAndCosAngle.w;
+	if (!isCamInsideCone)
+	{
+		// If camera is outside the cone, all the rays in slice hit the same cone
+		// side, which means that they all start from projection of this rib onto
+		// the shadow map.
+
+		// Intersect the ray with the light cone:
+		float2 coneIsecs = 
+			RayConeIntersect(gLightWorldPos.xyz, gSpotLightAxisAndCosAngle.xyz,
+			gSpotLightAxisAndCosAngle.w, intersecOrig, intersecDir);
+
+		if (any(coneIsecs == -FLT_MAX))
+			return gIncorrectSliceUVDirAndStart;
+
+		// Now select the first intersection with the cone along the ray.
+		float4 rayConeIsec = float4(intersecOrig + min(coneIsecs.x, coneIsecs.y) * intersecDir, 1);
+
+		// Project this intersection:
+		rayConeIsec = mul( rayConeIsec, gWorldToLightProj );
+		rayConeIsec /= rayConeIsec.w;
+
+		sliceOriginUV = ProjToUV(rayConeIsec.xy);
+	}
+#endif
+
+	return float4(sliceDir, sliceOriginUV);
+}
+
+technique11 RenderSliceUVDirection
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, RenderSliceUVDirectionPS() ) );
 	}
 }
