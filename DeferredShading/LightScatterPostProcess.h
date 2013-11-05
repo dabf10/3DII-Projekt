@@ -11,7 +11,8 @@ public:
 	LightScatterPostProcess( ID3D11Device *pd3dDevice, UINT backBufferWidth,
 		UINT backBufferHeight, UINT maxSamplesInSlice, UINT numEpipolarSlices,
 		UINT initialSampleStepInSlice, float refinementThreshold,
-		UINT epipoleSamplingDensityFactor, UINT lightType );
+		UINT epipoleSamplingDensityFactor, UINT lightType, UINT minMaxShadowMapResolution,
+		UINT maxShadowMapStep );
 	~LightScatterPostProcess( void );
 
 	void PerformLightScatter( ID3D11DeviceContext *pd3dDeviceContext,
@@ -19,7 +20,8 @@ public:
 		XMFLOAT2 screenResolution, XMFLOAT4 lightScreenPos, CXMMATRIX viewProjInv,
 		XMFLOAT4 cameraPos, XMFLOAT4 dirOnLight, XMFLOAT4 lightWorldPos,
 		XMFLOAT4 spotLightAxisAndCosAngle, CXMMATRIX worldToLightProj,
-		XMFLOAT4 cameraUVAndDepthInShadowMap );
+		XMFLOAT4 cameraUVAndDepthInShadowMap, XMFLOAT2 shadowMapTexelSize,
+		ID3D11ShaderResourceView *shadowMap );
 
 	void Resize( ID3D11Device *pd3dDevice, UINT width, UINT height );
 
@@ -30,6 +32,8 @@ public:
 	// InterpolationSource är knepig att verifiera, det verkar inte som att man kan rendera innehållet?
 	ID3D11ShaderResourceView *InterpolationSource( void ) const { return mInterpolationSourceSRV; }
 	ID3D11ShaderResourceView *SliceUVDirAndOrigin( void ) const { return mSliceUVDirAndOriginSRV; }
+	ID3D11ShaderResourceView *MinMaxShadowMap0( void ) const { return mMinMaxShadowMapSRV[0]; }
+	ID3D11ShaderResourceView *MinMaxShadowMap1( void ) const { return mMinMaxShadowMapSRV[1]; }
 
 private:
 	LightScatterPostProcess &operator=( const LightScatterPostProcess &rhs );
@@ -41,6 +45,8 @@ private:
 	void RenderCoordinateTexture( ID3D11DeviceContext *pd3dDeviceContext );
 	void RefineSampleLocations( ID3D11DeviceContext *pd3dDeviceContext );
 	void RenderSliceUVDirection( ID3D11DeviceContext *pd3dDeviceContext );
+	void Build1DMinMaxMipMap( ID3D11DeviceContext *pd3dDeviceContext, ID3D11ShaderResourceView *shadowMap );
+	HRESULT CreateMinMaxShadowMap( ID3D11Device *pd3dDevice );
 
 	void CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx );
 	void CreateTextures( ID3D11Device *pd3dDevice );
@@ -55,6 +61,8 @@ private:
 	float mRefinementThreshold;
 	UINT mEpipoleSamplingDensityFactor;
 	UINT mLightType;
+	UINT mMinMaxShadowMapResolution;
+	UINT mMaxShadowMapStep;
 
 	// Effect and techniques
 	ID3DX11Effect *mLightScatterFX;
@@ -64,6 +72,8 @@ private:
 	ID3DX11Effect *mRefineSampleLocationsFX;
 	ID3DX11EffectTechnique *mRefineSampleLocationsTech;
 	ID3DX11EffectTechnique *mRenderSliceUVDirInSMTech;
+	ID3DX11EffectTechnique *mInitializeMinMaxShadowMapTech;
+	ID3DX11EffectTechnique *mComputeMinMaxShadowMapLevelTech;
 
 	// States
 	ID3D11DepthStencilState *mDisableDepthTestDS;
@@ -85,6 +95,8 @@ private:
 	ID3D11UnorderedAccessView *mInterpolationSourceUAV;
 	ID3D11RenderTargetView *mSliceUVDirAndOriginRTV;
 	ID3D11ShaderResourceView *mSliceUVDirAndOriginSRV;
+	ID3D11RenderTargetView *mMinMaxShadowMapRTV[2];
+	ID3D11ShaderResourceView *mMinMaxShadowMapSRV[2];
 };
 
 #endif // _LIGHT_SCATTER_POST_PROCESS_H_

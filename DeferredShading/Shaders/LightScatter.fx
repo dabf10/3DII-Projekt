@@ -25,11 +25,26 @@ float4 gCameraUVAndDepthInShadowMap;
 #   define LIGHT_TYPE LIGHT_TYPE_DIRECTIONAL
 #endif
 
+Texture2D<float4> gSliceUVDirAndOrigin : register( t2 );
+Texture2D<float> gLightSpaceDepthMap : register( t3 );
+Texture2D<float2> gMinMaxLightSpaceDepth : register( t4 );
+uint gSrcMinMaxLevelXOffset;
+uint gDstMinMaxLevelXOffset;
+float2 gShadowMapTexelSize;
+
 SamplerState gSamLinearClamp : register( s0 )
 {
 	Filter = MIN_MAG_MIP_LINEAR;
 	AddressU = CLAMP;
 	AddressV = CLAMP;
+};
+
+SamplerState gSamLinearBorder0 : register( s1 )
+{
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = Border;
+	AddressV = Border;
+	BorderColor = float4(0.0f, 0.0f, 0.0f, 0.0f);
 };
 
 struct FullScreenTriangleVSOut
@@ -477,5 +492,91 @@ technique11 RenderSliceUVDirection
 		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
 		SetGeometryShader( NULL );
 		SetPixelShader( CompileShader( ps_4_0, RenderSliceUVDirectionPS() ) );
+	}
+}
+
+// Note that min/max shadow map does not contain finest resolution level.
+// The first level it contains corresponds to step == 2
+float2 InitializeMinMaxShadowMapPS( FullScreenTriangleVSOut input ) : SV_TARGET
+{
+	uint sliceIndex = input.PosH.y;
+
+	// Load slice direction in shadow map.
+	float4 sliceUVDirAndOrigin = gSliceUVDirAndOrigin.Load( uint3( sliceIndex, 0, 0 ) );
+
+	// Calculate current sample position on the ray.
+	float2 currUV = sliceUVDirAndOrigin.zw + sliceUVDirAndOrigin.xy * floor(input.PosH.x) * 2.0f * gShadowMapTexelSize;
+
+	// Gather 8 depths which will be used for PCF filtering for this sample and its
+	// immediate neighbor along the epipolar slice.
+	// Note that if the sample is located outside the shadow map, Gather() will
+	// return 0 as specified by the samLinearBorder0. As a result, volumes outside
+	// the shadow map will always be lit.
+	float4 depths = gLightSpaceDepthMap.Gather(gSamLinearBorder0, currUV);
+
+	// Shift UV to the next sample along the epipolar slice:
+	currUV += sliceUVDirAndOrigin.xy * gShadowMapTexelSize;
+	float4 neighbDepths = gLightSpaceDepthMap.Gather(gSamLinearBorder0, currUV);
+
+	float4 minDepth = min(depths, neighbDepths);
+	minDepth.xy = min(minDepth.xy, minDepth.zw);
+	minDepth.x = min(minDepth.x, minDepth.y);
+
+	float4 maxDepth = max(depths, neighbDepths);
+	maxDepth.xy = max(maxDepth.xy, maxDepth.zw);
+	maxDepth.x = max(maxDepth.x, maxDepth.y);
+
+	return float2(minDepth.x, maxDepth.x);
+}
+
+technique11 InitializeMinMaxShadowMapLevel
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_5_0, InitializeMinMaxShadowMapPS() ) );
+	}
+}
+
+// 1D min/max mip map is arranged as follows:
+//
+//		gSrcMinMaxLevelXOffset
+//		 |
+//		 |		gDstMinMaxLevelXOffset
+//		 |		 |
+//		 |_______|___ __
+//		 |		 |	 |	|
+//		 |		 |	 |	|
+//		 |		 |	 |	|
+//		 |		 |	 |	|
+//		 |_______|___|__|
+//		 |<----->|<->|
+//			 |	   |
+//			 |	 minMaxShadowMapResolution / 4?
+//		minMaxShadowMapResolution / 2
+float2 ComputeMinMaxShadowMapLevelPS( FullScreenTriangleVSOut input ) : SV_TARGET
+{
+	uint2 dstSampleIndex = uint2(input.PosH.xy);
+	uint2 srcSample0Index = uint2(gSrcMinMaxLevelXOffset + (dstSampleIndex.x - gDstMinMaxLevelXOffset) * 2, dstSampleIndex.y);
+	uint2 srcSample1Index = srcSample0Index + uint2(1, 0);
+
+	float2 minMaxDepth0 = gMinMaxLightSpaceDepth.Load( uint3( srcSample0Index, 0 ) );
+	float2 minMaxDepth1 = gMinMaxLightSpaceDepth.Load( uint3( srcSample1Index, 0 ) );
+
+	float2 minMaxDepth;
+	minMaxDepth.x = min(minMaxDepth0.x, minMaxDepth1.x);
+	minMaxDepth.y = max(minMaxDepth0.y, minMaxDepth1.y);
+	
+	return minMaxDepth;
+}
+
+technique11 ComputeMinMaxShadowMapLevel
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, ComputeMinMaxShadowMapLevelPS() ) );
 	}
 }

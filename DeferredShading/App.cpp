@@ -170,7 +170,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
 	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice,
 		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024,
-		16, 20.0f, 4, 0 );
+		16, 20.0f, 4, 0, 2048, 2048 / 32 );
     
 	return S_OK;
 }
@@ -606,10 +606,14 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		cameraUVAndDepthInShadowMap.z = XMVectorGetZ(cameraPosInLightProjSpace);
 		cameraUVAndDepthInShadowMap.w = XMVectorGetW(cameraPosInLightProjSpace);
 
+		XMFLOAT2 shadowMapTexelSize = XMFLOAT2(
+			1.0f / static_cast<float>(mShadowMap->Resolution()),
+			1.0f / static_cast<float>(mShadowMap->Resolution()));
+
 		mLightScatterPostProcess->PerformLightScatter( pd3dImmediateContext, mMainDepthSRV, mCamera.Proj(),
 			XMFLOAT2(mBackBufferSurfaceDesc->Width, mBackBufferSurfaceDesc->Height), lightScreenPos,
 			viewProjInv, cameraPos, dirOnLight, XMFLOAT4(0, 0, 0, 0), XMFLOAT4(0, 0, 1, 0), worldToLightProj,
-			cameraUVAndDepthInShadowMap );
+			cameraUVAndDepthInShadowMap, shadowMapTexelSize, mShadowMap->DepthMapSRV() );
 
 		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 		pd3dImmediateContext->OMSetDepthStencilState( NULL, 0 );
@@ -926,7 +930,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			//mLightScatterPostProcess->CoordinateTexture(),
 			//mLightScatterPostProcess->EpipolarCamSpaceZ(),
 			//mLightScatterPostProcess->InterpolationSource(),
-			mLightScatterPostProcess->SliceUVDirAndOrigin(),
+			//mLightScatterPostProcess->SliceUVDirAndOrigin(),
+			mLightScatterPostProcess->MinMaxShadowMap0(),
+			//mLightScatterPostProcess->MinMaxShadowMap1(),
 			//mMainDepthSRV,
 			mGBuffer->NormalSRV(),
 			mLightSRV,

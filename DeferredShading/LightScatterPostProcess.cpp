@@ -5,7 +5,8 @@
 LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	UINT backBufferWidth, UINT backBufferHeight, UINT maxSamplesInSlice,
 	UINT numEpipolarSlices, UINT initialSampleStepInSlice, float refinementThreshold,
-	UINT epipoleSamplingDensityFactor, UINT lightType ) :
+	UINT epipoleSamplingDensityFactor, UINT lightType, UINT minMaxShadowMapResolution,
+	UINT maxShadowMapStep ) :
 	mLightScatterFX( 0 ),
 	mRefineSampleLocationsFX( 0 ),
 	mDisableDepthTestDS( 0 ),
@@ -30,8 +31,16 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mInitialSampleStepInSlice( initialSampleStepInSlice ),
 	mRefinementThreshold( refinementThreshold ),
 	mEpipoleSamplingDensityFactor( epipoleSamplingDensityFactor ),
-	mLightType( lightType )
+	mLightType( lightType ),
+	mMinMaxShadowMapResolution( minMaxShadowMapResolution ),
+	mMaxShadowMapStep( maxShadowMapStep )
 {
+	for (int i = 0; i < 2; ++i)
+	{
+		mMinMaxShadowMapRTV[i] = 0;
+		mMinMaxShadowMapSRV[i] = 0;
+	}
+
 	UINT sampleRefinementCSMinimumThreadGroupSize = 128; // Must be greater than 32
 	// Thread group size must be at least as large as initial sample step.
 	mSampleRefinementCSThreadGroupSize = max( sampleRefinementCSMinimumThreadGroupSize, initialSampleStepInSlice );
@@ -45,7 +54,9 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mRenderCoordinateTextureTech = mLightScatterFX->GetTechniqueByName("GenerateCoordinateTexture");
 	mRefineSampleLocationsTech = mRefineSampleLocationsFX->GetTechniqueByName("RefineSampleLocations");
 	mRenderSliceUVDirInSMTech = mLightScatterFX->GetTechniqueByName("RenderSliceUVDirection");
-
+	mInitializeMinMaxShadowMapTech = mLightScatterFX->GetTechniqueByName("InitializeMinMaxShadowMap");
+	mComputeMinMaxShadowMapLevelTech = mLightScatterFX->GetTechniqueByName("ComputeMinMaxShadowMapLevel");
+	
 	//
 	// Create states
 	//
@@ -118,6 +129,11 @@ LightScatterPostProcess::~LightScatterPostProcess( void )
 	SAFE_RELEASE( mInterpolationSourceUAV );
 	SAFE_RELEASE( mSliceUVDirAndOriginRTV );
 	SAFE_RELEASE( mSliceUVDirAndOriginSRV );
+	for (int i = 0; i < 2; ++i)
+	{
+		SAFE_RELEASE( mMinMaxShadowMapRTV[i] );
+		SAFE_RELEASE( mMinMaxShadowMapSRV[i] );
+	}
 }
 
 void LightScatterPostProcess::Resize( ID3D11Device *pd3dDevice, UINT width, UINT height )
@@ -247,13 +263,50 @@ void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice )
 		V( pd3dDevice->CreateRenderTargetView( sliceUVDirInShadowMap, NULL, &mSliceUVDirAndOriginRTV ) );
 		SAFE_RELEASE( sliceUVDirInShadowMap );
 	}
+
+	V( CreateMinMaxShadowMap( pd3dDevice ) );
+}
+
+HRESULT LightScatterPostProcess::CreateMinMaxShadowMap( ID3D11Device *pd3dDevice )
+{
+	D3D11_TEXTURE2D_DESC minMaxShadowMapTexDesc =
+	{
+		// Min/max shadow map does not contain finest resolution level of the
+		// shadow map.
+		mMinMaxShadowMapResolution,								// UINT Width;
+		mNumEpipolarSlices,										// UINT Height;
+		1,														// UINT MipLevels;
+		1,														// UINT ArraySize;
+		DXGI_FORMAT_R16G16_FLOAT,								// DXGI_FORMAT Format;
+		{ 1, 0 },												// DXGI_SAMPLE_DESC SampleDesc;
+		D3D11_USAGE_DEFAULT,									// D3D11_USAGE Usage;
+		D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET,	// UINT BindFlags;
+		0,														// UINT CPUAccessFlags;
+		0,														// UINT MiscFlags;
+	};
+
+	HRESULT hr;
+
+	for (int i = 0; i < 2; ++i)
+	{
+		SAFE_RELEASE( mMinMaxShadowMapSRV[i] );
+		SAFE_RELEASE( mMinMaxShadowMapRTV[i] );
+
+		ID3D11Texture2D *minMaxShadowMap;
+		V_RETURN( pd3dDevice->CreateTexture2D( &minMaxShadowMapTexDesc, NULL, &minMaxShadowMap ) );
+		V_RETURN( pd3dDevice->CreateShaderResourceView( minMaxShadowMap, NULL, &mMinMaxShadowMapSRV[i] ) );
+		V_RETURN( pd3dDevice->CreateRenderTargetView( minMaxShadowMap, NULL, &mMinMaxShadowMapRTV[i] ) );
+		SAFE_RELEASE( minMaxShadowMap );
+	}
+
+	return S_OK;
 }
 
 void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDeviceContext,
 	ID3D11ShaderResourceView *sceneDepth, CXMMATRIX cameraProj, XMFLOAT2 screenResolution,
 	XMFLOAT4 lightScreenPos, CXMMATRIX viewProjInv, XMFLOAT4 cameraPos, XMFLOAT4 dirOnLight,
 	XMFLOAT4 lightWorldPos, XMFLOAT4 spotLightAxisAndCosAngle, CXMMATRIX worldToLightProj,
-	XMFLOAT4 cameraUVAndDepthInShadowMap )
+	XMFLOAT4 cameraUVAndDepthInShadowMap, XMFLOAT2 shadowMapTexelSize, ID3D11ShaderResourceView *shadowMap )
 {
 	mRefineSampleLocationsFX->GetVariableByName("gLightScreenPos")->AsVector()->SetFloatVector((float*)&lightScreenPos);
 	mRefineSampleLocationsFX->GetVariableByName("gMaxSamplesInSlice")->AsScalar()->SetInt(mMaxSamplesInSlice);
@@ -270,6 +323,7 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	mLightScatterFX->GetVariableByName("gSpotLightAxisAndCosAngle")->AsVector()->SetFloatVector((float*)&spotLightAxisAndCosAngle);
 	mLightScatterFX->GetVariableByName("gWorldToLightProj")->AsMatrix()->SetMatrix((float*)&worldToLightProj);
 	mLightScatterFX->GetVariableByName("gCameraUVAndDepthInShadowMap")->AsVector()->SetFloatVector((float*)&cameraUVAndDepthInShadowMap);
+	mLightScatterFX->GetVariableByName("gShadowMapTexelSize")->AsVector()->SetFloatVector((float*)&shadowMapTexelSize);
 
 	// Step 1: Reconstruct camera space Z (convert post projection to linear)
 	// Requires: Scene depth, camera proj
@@ -291,6 +345,11 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	// [num slices x 1] texture containing slice directions in shadow map
 	// UV space.
 	RenderSliceUVDirection( pd3dDeviceContext );
+
+	// Step 5: Build 1D min/max mipmap
+	Build1DMinMaxMipMap( pd3dDeviceContext, shadowMap );
+
+	// Step 6: Mark ray marching samples in stencil
 }
 
 void LightScatterPostProcess::ReconstructCameraSpaceZ( ID3D11DeviceContext *pd3dDeviceContext,
@@ -444,6 +503,102 @@ void LightScatterPostProcess::RenderSliceUVDirection( ID3D11DeviceContext *pd3dD
 	mLightScatterFX->GetVariableByName("gCamSpaceZ")->AsShaderResource()->SetResource( 0 );
 	mLightScatterFX->GetVariableByName("gSliceEndPoints")->AsShaderResource()->SetResource( 0 );
 	mRenderSliceUVDirInSMTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+
+	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
+}
+
+void LightScatterPostProcess::Build1DMinMaxMipMap( ID3D11DeviceContext *pd3dDeviceContext,
+												  ID3D11ShaderResourceView *shadowMap )
+{
+	pd3dDeviceContext->OMSetDepthStencilState( mDisableDepthTestDS, 0 );
+	pd3dDeviceContext->RSSetState( mSolidFillNoCullRS );
+	float blendFactor[] = { 0, 0, 0, 0 };
+	pd3dDeviceContext->OMSetBlendState( mDefaultBS, blendFactor, 0xFFFFFFFF );
+
+	UINT xOffset = 0;
+	UINT prevXOffset = 0;
+	UINT parity = 0;
+	ID3D11Resource *minMaxShadowMap0, *minMaxShadowMap1;
+	mMinMaxShadowMapRTV[0]->GetResource( &minMaxShadowMap0 );
+	mMinMaxShadowMapRTV[1]->GetResource( &minMaxShadowMap1 );
+	
+	// Note that we start rendering min/max shadow map from step 2.
+	for (UINT step = 2; step <= mMaxShadowMapStep; step *= 2, parity = (parity+1)%2 )
+	{
+		// Use two buffers which are in turn used as the source and destination.
+		pd3dDeviceContext->OMSetRenderTargets( 1, &mMinMaxShadowMapRTV[parity], NULL );
+
+		if (step == 2)
+		{
+			// At the initial pass, the shader gathers 8 depths which will be used
+			// for PCF filtering at the sample location and its next neighbor along
+			// the slice and outputs min/max depths.
+
+			mLightScatterFX->GetVariableByName("gSliceUVDirAndOrigin")->AsShaderResource()->SetResource( mSliceUVDirAndOriginSRV );
+			mLightScatterFX->GetVariableByName("gLightSpaceDepthMap")->AsShaderResource()->SetResource( shadowMap );
+		}
+		else
+		{
+			// At the subsequent passes, the shader loads two min/max values from
+			// the next finer level to compute next level of the binary tree.
+
+			// Set source and destination min/max data offsets:
+			mLightScatterFX->GetVariableByName("gSrcMinMaxLevelXOffset")->AsScalar()->SetInt( prevXOffset );
+			mLightScatterFX->GetVariableByName("gDstMinMaxLevelXOffset")->AsScalar()->SetInt( xOffset );
+			// HEST: Y?
+			mLightScatterFX->GetVariableByName("gMinMaxLightSpaceDepth")->AsShaderResource()->SetResource( mMinMaxShadowMapSRV[ (parity+1)%2 ] );
+		}
+
+		D3D11_VIEWPORT vp;
+		vp.TopLeftX = xOffset;
+		vp.TopLeftY = 0;
+		vp.Width = static_cast<float>( mMinMaxShadowMapResolution ) / step;
+		vp.Height = static_cast<float>( mNumEpipolarSlices );
+		vp.MinDepth = 0;
+		vp.MaxDepth = 1;
+		pd3dDeviceContext->RSSetViewports( 1, &vp );
+
+		if (step > 2)
+			mComputeMinMaxShadowMapLevelTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+		else
+			mInitializeMinMaxShadowMapTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+		
+		pd3dDeviceContext->Draw( 3, 0 );
+
+		// Unbind resources
+		if (step == 2)
+		{
+			mLightScatterFX->GetVariableByName("gSliceUVDirAndOrigin")->AsShaderResource()->SetResource( 0 );
+			mLightScatterFX->GetVariableByName("gLightSpaceDepthMap")->AsShaderResource()->SetResource( 0 );
+			mInitializeMinMaxShadowMapTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+		}
+		else
+		{
+			mLightScatterFX->GetVariableByName("gMinMaxLightSpaceDepth")->AsShaderResource()->SetResource( 0 );
+			mComputeMinMaxShadowMapLevelTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+		}
+
+		// All the data must reside in 0-th texture, so copy current level, if
+		// necessary, from 1-st texture.
+		if (parity == 1)
+		{
+			D3D11_BOX srcBox;
+			srcBox.left = xOffset;
+			srcBox.right = xOffset + mMinMaxShadowMapResolution / step;
+			srcBox.top = 0;
+			srcBox.bottom = mNumEpipolarSlices;
+			srcBox.front = 0;
+			srcBox.back = 1;
+			pd3dDeviceContext->CopySubresourceRegion( minMaxShadowMap0, 0, xOffset,
+													0, 0, minMaxShadowMap1, 0, &srcBox );
+		}
+
+		prevXOffset = xOffset;
+		xOffset += mMinMaxShadowMapResolution / step;
+	}
+
+	SAFE_RELEASE( minMaxShadowMap0 );
+	SAFE_RELEASE( minMaxShadowMap1 );
 
 	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
 }
