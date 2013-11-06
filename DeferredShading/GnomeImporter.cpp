@@ -396,7 +396,6 @@ bool gnomeImporter::getVectors(string path, vector<material> &materialList, vect
 
 bool gnomeImporter::SerializeToFile(std::string path)
 {
-	const size_t bufferSize		= 67108864;
 	const size_t materialSize	= sizeof(material);
 	const size_t vertexSize		= sizeof(vertex);
 	const size_t keyframeSize	= sizeof(keyframe);
@@ -482,7 +481,6 @@ bool gnomeImporter::SerializeToFile(std::string path)
 
 bool gnomeImporter::DeserializeFromFile(ifstream* file)
 {
-	const size_t bufferSize		= 67108864;
 	const size_t materialSize	= sizeof(material);
 	const size_t vertexSize		= sizeof(vertex);
 	const size_t keyframeSize	= sizeof(keyframe);
@@ -490,14 +488,14 @@ bool gnomeImporter::DeserializeFromFile(ifstream* file)
 	
 	char* binary	= new char[bufferSize];
 	char* pos		= binary;
-	int a = 0;
-	do
+	int bytesRead = 0;
+	
+	while (file->getline(pos, bufferSize - bytesRead))
 	{
-	file->read(binary, bufferSize);
-	int b = file->eofbit;
-	a = file->gcount();
+		pos += file->gcount();
+		bytesRead += file->gcount();
 	}
-	while (a > 0);
+
 	return true;
 }
 
