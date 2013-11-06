@@ -32,6 +32,9 @@
     <Filter Include="Application\GBuffer">
       <UniqueIdentifier>{a4c2201b-f15b-4b89-814b-24822c4b6541}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Application\GnomeLoader">
+      <UniqueIdentifier>{c720df1d-fd38-448f-a420-348b3f45d1e7}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="DXUT\Optional\directx.ico">
@@ -150,6 +153,9 @@
     <ClCompile Include="GBuffer.cpp">
       <Filter>Application\GBuffer</Filter>
     </ClCompile>
+    <ClCompile Include="GnomeImporter.cpp">
+      <Filter>Application\GnomeLoader</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h">
@@ -169,6 +175,9 @@
     </ClInclude>
     <ClInclude Include="GBuffer.h">
       <Filter>Application\GBuffer</Filter>
+    </ClInclude>
+    <ClInclude Include="GnomeImporter.h">
+      <Filter>Application\GnomeLoader</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

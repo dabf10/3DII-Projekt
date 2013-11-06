@@ -346,6 +346,13 @@ bool App::Init( )
 	translation = XMMatrixTranslation(0, 0, 0);
 	world = scale * rotation * translation;
 
+	//load modelX
+	gnomeImporter importer = gnomeImporter();
+	std::vector<gnomeImporter::material> materials = std::vector<gnomeImporter::material>();
+	std::vector<gnomeImporter::vertex> vertices;
+	std::vector<int> hest;
+	importer.getVectors("Flamingo_Final_1.GNOME", materials, vertices, hest);
+
 	return true;
 }
 
