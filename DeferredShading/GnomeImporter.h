@@ -1,11 +1,14 @@
 #ifndef GNOMEIMPORTER_H
 #define GNOMEIMPORTER_H
+//#define WINDOWS_MEAN_AND_LEAN;
 #pragma once
 #include <iostream>
 #include <fstream>
 #include <vector>
 #include <string>
 #include <stdlib.h>
+#include <Windows.h>
+
 using namespace std;
 
 
@@ -62,7 +65,7 @@ private:
 	int importVertex(fstream &file, string lines, vertex &vet, int &index);
 	void importFile(string path);
 	bool	SerializeToFile(std::string path);
-	bool	DeserializeFromFile(ifstream* file);
+	bool	DeserializeFromFile(std::string binaryPath, size_t fileLength);
 public:
 	char path[256];
 	char scenePath[256];

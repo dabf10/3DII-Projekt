@@ -135,17 +135,17 @@ void gnomeImporter::importFile(string path)
 			m_File.getline( buffer, sizeof( buffer ) );
 
 			int asterix				= sscanf_s( buffer, "*%s", c, sizeof(c) );
-																										// *****HEADER*****
+			// *****HEADER*****
 			int sceneName			= sscanf_s( buffer, "#S %s", c, sizeof(c) );						// #S
 			int numberOfMaterials	= sscanf_s( buffer, "#M %d", &i[0] );								// #M
 			int numberOfVertices	= sscanf_s( buffer, "#V %d", &i[0] );								// #V
-																										// #T
+			// #T
 			int isAnimated			= sscanf_s( buffer, "#iA %d", &i[0] );								// #iA
 			int isSkeletal			= sscanf_s( buffer, "#iS %d", &i[0] );								// #iS
-																										// #B
-																										// #A
+			// #B
+			// #A
 
-																										// *****MATERIALS*****
+			// *****MATERIALS*****
 			//int materialName		= sscanf_s( buffer, "%s", c, sizeof(c) );							// <matName> (fix)
 			int materialAmbient		= sscanf_s( buffer, "A %f %f %f", &f[0], &f[1], &f[2] );			// A
 			int materialDiffuse		= sscanf_s( buffer, "D %f %f %f", &f[0], &f[1], &f[2] );			// D
@@ -158,7 +158,7 @@ void gnomeImporter::importFile(string path)
 			int materialNormalMap	= sscanf_s( buffer, "NM %s", c, sizeof(c) );						// NM
 			int materialAlphaTex	= sscanf_s( buffer, "AM %s", c, sizeof(c) );						// AM
 
-																										// *****VERTICES*****
+			// *****VERTICES*****
 			int meshGroup			= sscanf_s( buffer, "%%M %d", &i[0] );								// %M
 			int vertexPosition		= sscanf_s( buffer, "P %f %f %f", &f[0], &f[1], &f[2] );			// P
 			int vertexNormal		= sscanf_s( buffer, "N %f %f %f", &f[0], &f[1], &f[2] );			// N
@@ -168,197 +168,197 @@ void gnomeImporter::importFile(string path)
 			int vertexBoneWeight	= sscanf_s( buffer, "BW %f %f %f %f", &f[0], &f[1], &f[2], &f[3] );	// BW
 			int vertexBoneIndices	= sscanf_s( buffer, "BI %d %d %d %d", &i[0], &i[1], &i[2], &i[3] );	// BI
 
-																										// *****BONEOFFSETS*****
+			// *****BONEOFFSETS*****
 			int jointOffset			= sscanf_s( buffer, "jointOffset%d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f",
-												&i[0], &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7],
-												&f[8], &f[9], &f[10], &f[11], &f[12], &f[13], &f[14], &f[15] ); // jointOffset
-			
-																										// *****BONEHIERARCHY*****
+				&i[0], &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7],
+				&f[8], &f[9], &f[10], &f[11], &f[12], &f[13], &f[14], &f[15] ); // jointOffset
+
+			// *****BONEHIERARCHY*****
 			int jointParent			= sscanf_s( buffer, "jointParent%d %d", &i[0], &i[1] );				// jointParent
 
-																										// *****BONETURRETID*****
+			// *****BONETURRETID*****
 			// DO THIS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
-																										// ******ANIMATIONCLIPS*******
+			// ******ANIMATIONCLIPS*******
 			int animationClip		= sscanf_s( buffer, "AnimationClip %s", c, sizeof(c) );				// AnimationClip
 			int jointFrames			= sscanf_s( buffer, "\tjoint%d #Keyframes: %d", &i[0], &i[1] );		// joint
 			int keyframe = sscanf_s( buffer, "\t\tTime: %f Pos: %f %f %f Scale: %f %f %f Quat: %f %f %f %f",
-											&f[0], &f[1], &f[2], &f[3],	&f[4], &f[5], &f[6], &f[7], &f[8], &f[9], &f[10] ); // keyframe
+				&f[0], &f[1], &f[2], &f[3],	&f[4], &f[5], &f[6], &f[7], &f[8], &f[9], &f[10] ); // keyframe
 
 
 
-				switch (order)
+			switch (order)
+			{
+			case 0:
+				order++;
+				break;
+			case 1:
+				if ( asterix > 0 )
 				{
-				case 0:
+					string dafuqName = "SomethingSomethingDarkside";
+					strcpy_s(m_Material.name, dafuqName.length() + 1, dafuqName.c_str());
 					order++;
-					break;
-				case 1:
-					if ( asterix > 0 )
+				}
+				else if ( isSkeletal )
+				{
+					headSkeletal = m_isSkeletal = (bool)i[0];
+				}
+				else if ( isAnimated )
+				{
+					headAnimation = m_isAnimated = (bool)i[0];
+				}
+				else if ( sceneName > 0 )
+				{
+					strcpy_s(scenePath, strlen(c) + 1, c);
+				}
+				break;
+			case 2:
+				{
+					if ( materialAmbient > 0 )
 					{
-						string dafuqName = "SomethingSomethingDarkside";
-						strcpy_s(m_Material.name, dafuqName.length() + 1, dafuqName.c_str());
-						order++;
+						m_Material.ambient[0] = f[0];
+						m_Material.ambient[1] = f[1];
+						m_Material.ambient[2] = f[2];
+						wasPushed = false;
 					}
-					else if ( isSkeletal )
+					else if ( materialHasAlpha > 0 )
+						m_Material.hasAlpha = (bool)i[0];
+					else if ( materialDiffuse > 0 )
 					{
-						headSkeletal = m_isSkeletal = (bool)i[0];
+						m_Material.color[0] = f[0];
+						m_Material.color[1] = f[1];
+						m_Material.color[2] = f[2];
 					}
-					else if ( isAnimated )
+					else if ( materialSpecular > 0 )
 					{
-						headAnimation = m_isAnimated = (bool)i[0];
+						m_Material.specularity[0] = f[0];
+						m_Material.specularity[1] = f[1];
+						m_Material.specularity[2] = f[2];
 					}
-					else if ( sceneName > 0 )
+					else if ( materialSpecularPow > 0 )
+						m_Material.specularPower = f[0];
+					else if ( materialReflective > 0 )
+						m_Material.reflectivity = f[0];
+					else if ( materialTransparant > 0 )
+						m_Material.transparancy = f[0];
+					else if ( materialTexture > 0 )
 					{
-						strcpy_s(scenePath, strlen(c) + 1, c);
+						strcpy_s(m_Material.texture, strlen(c) + 1, c);
+						if (m_Material.texture[0] == '0')
+							m_Material.texture[0] = '\0';
 					}
-					break;
-				case 2:
+					else if ( materialNormalMap > 0 )
 					{
-						if ( materialAmbient > 0 )
-						{
-							m_Material.ambient[0] = f[0];
-							m_Material.ambient[1] = f[1];
-							m_Material.ambient[2] = f[2];
-							wasPushed = false;
-						}
-						else if ( materialHasAlpha > 0 )
-							m_Material.hasAlpha = (bool)i[0];
-						else if ( materialDiffuse > 0 )
-						{
-							m_Material.color[0] = f[0];
-							m_Material.color[1] = f[1];
-							m_Material.color[2] = f[2];
-						}
-						else if ( materialSpecular > 0 )
-						{
-							m_Material.specularity[0] = f[0];
-							m_Material.specularity[1] = f[1];
-							m_Material.specularity[2] = f[2];
-						}
-						else if ( materialSpecularPow > 0 )
-							m_Material.specularPower = f[0];
-						else if ( materialReflective > 0 )
-							m_Material.reflectivity = f[0];
-						else if ( materialTransparant > 0 )
-							m_Material.transparancy = f[0];
-						else if ( materialTexture > 0 )
-						{
-							strcpy_s(m_Material.texture, strlen(c) + 1, c);
-							if (m_Material.texture[0] == '0')
-								m_Material.texture[0] = '\0';
-						}
-						else if ( materialNormalMap > 0 )
-						{
-							strcpy_s(m_Material.normalTexture, strlen(c) + 1, c);
-							if (m_Material.normalTexture[0] == '0')
-								m_Material.normalTexture[0] = '\0';
-						}
-						else if ( materialAlphaTex > 0 )
-						{
-							strcpy_s(m_Material.alphaTexture, strlen(c) + 1, c);
-							if (m_Material.alphaTexture[0] == '0')
-								m_Material.alphaTexture[0] = '\0';
-						}
-						else if ( m_Material.ambient[0] >= 0 && !wasPushed )
-						{
-							materials.push_back(m_Material);
-							wasPushed = true;
-							if ( asterix > 0 )
-								order++;
-							else
-								strcpy_s(m_Material.name, strlen("SomethingSomethingDarkside") + 1, "SomethingSomethingDarkside");
-						}
-						else if( asterix > 0 )
+						strcpy_s(m_Material.normalTexture, strlen(c) + 1, c);
+						if (m_Material.normalTexture[0] == '0')
+							m_Material.normalTexture[0] = '\0';
+					}
+					else if ( materialAlphaTex > 0 )
+					{
+						strcpy_s(m_Material.alphaTexture, strlen(c) + 1, c);
+						if (m_Material.alphaTexture[0] == '0')
+							m_Material.alphaTexture[0] = '\0';
+					}
+					else if ( m_Material.ambient[0] >= 0 && !wasPushed )
+					{
+						materials.push_back(m_Material);
+						wasPushed = true;
+						if ( asterix > 0 )
 							order++;
+						else
+							strcpy_s(m_Material.name, strlen("SomethingSomethingDarkside") + 1, "SomethingSomethingDarkside");
 					}
-					break;
-				case 3:
+					else if( asterix > 0 )
+						order++;
+				}
+				break;
+			case 3:
+				{
+					if ( meshGroup > 0 )
+						m_MatIndex = i[0];
+					else if ( vertexPosition > 0 )
 					{
-						if ( meshGroup > 0 )
-							m_MatIndex = i[0];
-						else if ( vertexPosition > 0 )
-						{
-							m_Vertex.position[0] = f[0];
-							m_Vertex.position[1] = f[1];
-							m_Vertex.position[2] = f[2];
-						}
-						else if ( vertexNormal > 0 )
-						{
-							m_Vertex.normal[0] = f[0];
-							m_Vertex.normal[1] = f[1];
-							m_Vertex.normal[2] = f[2];
-						}
-						else if ( vertexTangent > 0 )
-						{
-							m_Vertex.tangent[0] = f[0];
-							m_Vertex.tangent[1] = f[1];
-							m_Vertex.tangent[2] = f[2];
-						}
-						else if ( vertexBiNormal > 0 )
-						{
-							m_Vertex.biNormal[0] = f[0];
-							m_Vertex.biNormal[1] = f[1];
-							m_Vertex.biNormal[2] = f[2];
-						}
-						else if ( vertexUV > 0 )
-						{
-							m_Vertex.uv[0] = f[0];
-							m_Vertex.uv[1] = f[1];
-							m_Vertex.uv[1] = 1 - m_Vertex.uv[1];
+						m_Vertex.position[0] = f[0];
+						m_Vertex.position[1] = f[1];
+						m_Vertex.position[2] = f[2];
+					}
+					else if ( vertexNormal > 0 )
+					{
+						m_Vertex.normal[0] = f[0];
+						m_Vertex.normal[1] = f[1];
+						m_Vertex.normal[2] = f[2];
+					}
+					else if ( vertexTangent > 0 )
+					{
+						m_Vertex.tangent[0] = f[0];
+						m_Vertex.tangent[1] = f[1];
+						m_Vertex.tangent[2] = f[2];
+					}
+					else if ( vertexBiNormal > 0 )
+					{
+						m_Vertex.biNormal[0] = f[0];
+						m_Vertex.biNormal[1] = f[1];
+						m_Vertex.biNormal[2] = f[2];
+					}
+					else if ( vertexUV > 0 )
+					{
+						m_Vertex.uv[0] = f[0];
+						m_Vertex.uv[1] = f[1];
+						m_Vertex.uv[1] = 1 - m_Vertex.uv[1];
 
-							if (!headSkeletal)
-							{
-								m_Vertex.material = m_MatIndex;
-								vertices.push_back( m_Vertex );
-							}
-						}
-						else if ( vertexBoneWeight > 0 )
+						if (!headSkeletal)
 						{
-							m_Vertex.skinWeight[0] = f[0];
-							m_Vertex.skinWeight[1] = f[1];
-							m_Vertex.skinWeight[2] = f[2];
-							m_Vertex.skinWeight[3] = f[3];
-						}
-						else if ( vertexBoneIndices > 0 )
-						{
-							m_Vertex.jointIndex[0] = i[0];
-							m_Vertex.jointIndex[1] = i[1];
-							m_Vertex.jointIndex[2] = i[2];
-							m_Vertex.jointIndex[3] = i[3];
 							m_Vertex.material = m_MatIndex;
 							vertices.push_back( m_Vertex );
 						}
-						else if ( asterix > 0 )
-							order++;
 					}
-					break;
-				case 4:
-					if ( asterix > 0 )
-						order++;
-					else if (m_isSkeletal)
-						int i = 0;
-
-					else if (m_isAnimated)
-						int i = 0;
-					else
-						order++;
-					break;
-
-					if ( asterix || !m_isSkeletal )
+					else if ( vertexBoneWeight > 0 )
 					{
-						m_JointIndex = 0;
-						order++;
-						if (!m_isSkeletal)
-							order += 100;
+						m_Vertex.skinWeight[0] = f[0];
+						m_Vertex.skinWeight[1] = f[1];
+						m_Vertex.skinWeight[2] = f[2];
+						m_Vertex.skinWeight[3] = f[3];
 					}
-
-					break;
-				case 6:
-					if ( asterix > 0 )
+					else if ( vertexBoneIndices > 0 )
+					{
+						m_Vertex.jointIndex[0] = i[0];
+						m_Vertex.jointIndex[1] = i[1];
+						m_Vertex.jointIndex[2] = i[2];
+						m_Vertex.jointIndex[3] = i[3];
+						m_Vertex.material = m_MatIndex;
+						vertices.push_back( m_Vertex );
+					}
+					else if ( asterix > 0 )
 						order++;
-
-					break;
 				}
+				break;
+			case 4:
+				if ( asterix > 0 )
+					order++;
+				else if (m_isSkeletal)
+					int i = 0;
+
+				else if (m_isAnimated)
+					int i = 0;
+				else
+					order++;
+				break;
+
+				if ( asterix || !m_isSkeletal )
+				{
+					m_JointIndex = 0;
+					order++;
+					if (!m_isSkeletal)
+						order += 100;
+				}
+
+				break;
+			case 6:
+				if ( asterix > 0 )
+					order++;
+
+				break;
+			}
 		}
 		m_File.close();
 		SerializeToFile(path);
@@ -367,10 +367,14 @@ void gnomeImporter::importFile(string path)
 
 bool gnomeImporter::getVectors(string path, vector<material> &materialList, vector<vertex> &vertexList, vector<int> &materialSwitchIndices)
 {
-	ifstream binaryFile(path + "BINARY", std::ifstream::binary);
+	std::string binaryPath = path + "BINARY";
+	ifstream binaryFile(binaryPath, std::ifstream::binary);
 	if(binaryFile.is_open())
 	{
-		DeserializeFromFile(&binaryFile);
+		binaryFile.seekg (0,binaryFile.end);
+		size_t length =binaryFile.tellg();
+		binaryFile.seekg (0, binaryFile.beg);
+		DeserializeFromFile(binaryPath, length);
 	}
 	else
 	{
@@ -435,7 +439,7 @@ bool gnomeImporter::SerializeToFile(std::string path)
 		pos += vertexSize;
 		readCount += vertexSize;
 	}
-	
+
 	vectorSize = joints.size();
 	memcpy_s(pos, bufferSize, &vectorSize, 4);
 	pos += 4;
@@ -466,10 +470,10 @@ bool gnomeImporter::SerializeToFile(std::string path)
 	memcpy_s(pos, bufferSize, &path, sizeof(path));
 	pos += sizeof(path);
 	readCount += sizeof(path);
-	
+
 	//flush
 	ofstream ofs = ofstream(path + "BINARY", ofstream::binary);
-	ofs.write(binary, bufferSize); //Ingen nullterminator
+	ofs.write(binary, readCount); //Ingen nullterminator
 	ofs.close();
 
 	//Cleanup
@@ -479,24 +483,18 @@ bool gnomeImporter::SerializeToFile(std::string path)
 	return true;
 }
 
-bool gnomeImporter::DeserializeFromFile(ifstream* file)
+bool gnomeImporter::DeserializeFromFile(std::string binaryPath, size_t fileLength)
 {
 	const size_t materialSize	= sizeof(material);
 	const size_t vertexSize		= sizeof(vertex);
 	const size_t keyframeSize	= sizeof(keyframe);
 	const size_t jointSize		= sizeof(joint);
-	
-	char* binary	= new char[bufferSize];
-	char* pos		= binary;
-	int bytesRead = 0;
-	
-	while (file->getline(pos, bufferSize - bytesRead))
-	{
-		pos += file->gcount();
-		bytesRead += file->gcount();
-	}
 
-	return true;
+	HANDLE fileHandle = CreateFileA(binaryPath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+	DWORD bytesread = 0; // debug
+	char* buffer = new char[fileLength];
+	ReadFile(fileHandle, buffer, fileLength, &bytesread, NULL);
+		return true;
 }
 
 gnomeImporter::gnomeImporter(void)
