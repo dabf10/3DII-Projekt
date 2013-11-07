@@ -1,7 +1,6 @@
 /* dot gnome parser */
 
 #include "gnomeImporter.h"
-//#include "Misc.h"
 
 
 
@@ -111,7 +110,6 @@ void gnomeImporter::importFile(string path)
 	fstream m_File (path, ios::in);
 	material m_Material;
 	vertex m_Vertex;
-
 	int m_MatIndex = 0;
 	int m_KeyIndex = 0;
 	bool m_isSkeletal = false;
@@ -354,6 +352,7 @@ void gnomeImporter::importFile(string path)
 
 				break;
 			case 6:
+				int id;
 				if ( asterix > 0 )
 					order++;
 
@@ -396,18 +395,14 @@ bool gnomeImporter::getVectors(string path, vector<material> &materialList, vect
 }
 
 
+
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! EOF-tecknet kan komma ifrån de inlästa filerna !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 bool gnomeImporter::SerializeToFile(std::string path)
 {
-	const size_t materialSize	= sizeof(material);
-	const size_t vertexSize		= sizeof(vertex);
-	const size_t keyframeSize	= sizeof(keyframe);
-	const size_t jointSize		= sizeof(joint);
-
-	char* binary	= new char[bufferSize];
-	char* pos		= binary;
-	size_t readCount = 0;
+	char* binary	= new char[bufferSize]; //Pointer to the start of the char aray
+	char* pos		= binary;				//Pointer to the next position that should be ritten to
+	size_t readCount = 0;					//How many bytes have been read in total
 
 	//booleans
 	memcpy_s(pos, bufferSize, &headAnimation, 1);
@@ -418,58 +413,38 @@ bool gnomeImporter::SerializeToFile(std::string path)
 	++readCount;
 
 	//vectors
+
+	//Materials
 	unsigned int vectorSize = materials.size();
-	memcpy_s(pos, bufferSize, &vectorSize, 4);
-	pos += 4;
-	readCount += 4;
+	memcpy_s(pos, bufferSize - readCount, &vectorSize, uintSize); //Save the number of elements in the vector so that we know how many to read when loading.
+	pos += uintSize;
+	readCount += uintSize;
 	for (unsigned int i = 0; i < materials.size(); ++i)
 	{
-		memcpy_s(pos, bufferSize, &materials[i], materialSize);
+		memcpy_s(pos, bufferSize - readCount, &materials[i], materialSize); //Copy the whole struct.
 		pos += materialSize;
 		readCount += materialSize;
 	}
 
+	//Vertices
 	vectorSize = vertices.size();
-	memcpy_s(pos, bufferSize, &vectorSize, 4);
-	pos += 4;
-	readCount += 4;
+	memcpy_s(pos, bufferSize - readCount, &vectorSize, uintSize);
+	pos += uintSize;
+	readCount += uintSize;
 	for (unsigned int i = 0; i < vertices.size(); ++i)
 	{
-		memcpy_s(pos, bufferSize, &vertices[i], vertexSize);
+		memcpy_s(pos, bufferSize - readCount, &vertices[i], vertexSize);
 		pos += vertexSize;
 		readCount += vertexSize;
 	}
 
-	vectorSize = joints.size();
-	memcpy_s(pos, bufferSize, &vectorSize, 4);
-	pos += 4;
-	readCount += 4;
-	for (unsigned int i = 0; i < joints.size(); ++i)
-	{
-		memcpy_s(pos, bufferSize, &joints[i], jointSize);
-		pos += jointSize;
-		readCount += jointSize;
-	}
-
-	vectorSize = turrets.size();
-	memcpy_s(pos, bufferSize, &vectorSize, 4);
-	pos += 4;
-	readCount += 4;
-	for (unsigned int i = 0; i < turrets.size(); ++i)
-	{
-		memcpy_s(pos, bufferSize, &turrets[i], 4);
-		pos += 4;
-		readCount += 4;
-
-	}
-
 	//strings
-	memcpy_s(pos, bufferSize, &scenePath, sizeof(scenePath));
+	size_t stringSize = 0;
+
+	//ScenePath
+	memcpy_s(pos, bufferSize - readCount, &scenePath, sizeof(scenePath)); //Copy the actual string to the output.
 	pos += sizeof(scenePath);
 	readCount += sizeof(scenePath);
-	memcpy_s(pos, bufferSize, &path, sizeof(path));
-	pos += sizeof(path);
-	readCount += sizeof(path);
 
 	//flush
 	ofstream ofs = ofstream(path + "BINARY", ofstream::binary);
@@ -481,20 +456,67 @@ bool gnomeImporter::SerializeToFile(std::string path)
 		delete[] binary;
 
 	return true;
+
+	return true;
 }
 
 bool gnomeImporter::DeserializeFromFile(std::string binaryPath, size_t fileLength)
 {
-	const size_t materialSize	= sizeof(material);
-	const size_t vertexSize		= sizeof(vertex);
-	const size_t keyframeSize	= sizeof(keyframe);
-	const size_t jointSize		= sizeof(joint);
-
+	//Read the file
 	HANDLE fileHandle = CreateFileA(binaryPath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-	DWORD bytesread = 0; // debug
 	char* buffer = new char[fileLength];
+	char* pos = buffer;
+	DWORD bytesread = 0;
 	ReadFile(fileHandle, buffer, fileLength, &bytesread, NULL);
-		return true;
+	//TODO: Stänga filen?
+
+	//copy data
+
+	//booleans
+	memcpy_s(&headAnimation, 1, pos, 1);
+	++pos;
+	memcpy_s(&headSkeletal, 1, pos, 1);
+	++pos;
+
+	//vectors
+
+	unsigned int vectorCount = 0;
+	//Materials
+	memcpy_s(&vectorCount, uintSize, pos, uintSize); //Get the number of elements to read.
+	pos += uintSize;
+	if(vectorCount > 0)
+	{
+		material* tempMaterials = new material[vectorCount]; //Temporary storage for read elements.
+		memcpy_s(tempMaterials, materialSize * vectorCount, pos, materialSize* vectorCount);//Read all the elements at the same time and put them in the arrays memory range.
+		pos += materialSize * vectorCount; //Move the position pointer as many bytes as was read by memcpy.
+		materials.insert(materials.end(), &tempMaterials[0], &tempMaterials[vectorCount]); //copy the array into the vector using the vectors insert function. //Last parameter points to an element outside of the array. This is ok(and neccessary) since this function does not copy the last element.
+		if(tempMaterials) //Cleanup
+			delete[] tempMaterials;
+	}
+
+	//Vertices
+	memcpy_s(&vectorCount, uintSize, pos, uintSize);
+	pos += uintSize;
+	if(vectorCount > 0)
+	{
+		vertex* tempVertices = new vertex[vectorCount];
+		memcpy_s(tempVertices, vectorCount * vertexSize, pos, vectorCount * vertexSize);
+		pos += vectorCount * vertexSize;
+		vertices.insert(vertices.end(), &tempVertices[0], &tempVertices[vectorCount]);
+		if(tempVertices)
+			delete[] tempVertices;
+	}
+
+	//Strings
+
+	//Scenepath
+	memcpy_s(&scenePath, sizeof(scenePath), pos, sizeof(scenePath));
+	pos += sizeof(scenePath);
+
+	if(buffer)
+		delete[] buffer;
+
+	return true;
 }
 
 gnomeImporter::gnomeImporter(void)
