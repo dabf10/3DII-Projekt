@@ -448,7 +448,7 @@ bool gnomeImporter::SerializeToFile(std::string path)
 
 	//flush
 	ofstream ofs = ofstream(path + "BINARY", ofstream::binary);
-	ofs.write(binary, readCount); //Ingen nullterminator
+	ofs.write(binary, readCount); //Not null terminated (deliberately)
 	ofs.close();
 
 	//Cleanup
