@@ -14,6 +14,7 @@
 #include "d3dx11effect.h"
 #include "GnomeImporter.h"
 
+
 #ifdef _DEBUG
 #pragma comment(lib, "Effect_x86\\Effects11D.lib")
 #else

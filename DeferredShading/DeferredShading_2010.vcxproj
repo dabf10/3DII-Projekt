@@ -384,9 +384,11 @@
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="SkinnedDatacpp.cpp" />
     <ClCompile Include="SSAO.cpp" />
     <ClInclude Include="GBuffer.h" />
     <ClInclude Include="GnomeImporter.h" />
+    <ClInclude Include="SkinnedData.h" />
     <ClInclude Include="SSAO.h" />
     <None Include="DXUT\Optional\directx.ico" />
     <ClInclude Include="App.h" />

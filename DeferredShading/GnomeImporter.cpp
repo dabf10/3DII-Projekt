@@ -468,7 +468,6 @@ bool gnomeImporter::DeserializeFromFile(std::string binaryPath, size_t fileLengt
 	char* pos = buffer;
 	DWORD bytesread = 0;
 	ReadFile(fileHandle, buffer, fileLength, &bytesread, NULL);
-	//TODO: Stänga filen?
 
 	//copy data
 

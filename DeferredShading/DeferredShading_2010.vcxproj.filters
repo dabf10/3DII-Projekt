@@ -156,6 +156,9 @@
     <ClCompile Include="GnomeImporter.cpp">
       <Filter>Application\GnomeLoader</Filter>
     </ClCompile>
+    <ClCompile Include="SkinnedDatacpp.cpp">
+      <Filter>Application\Model</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h">
@@ -178,6 +181,9 @@
     </ClInclude>
     <ClInclude Include="GnomeImporter.h">
       <Filter>Application\GnomeLoader</Filter>
+    </ClInclude>
+    <ClInclude Include="SkinnedData.h">
+      <Filter>Application\Model</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
