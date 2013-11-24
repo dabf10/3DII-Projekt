@@ -11,6 +11,7 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mRefineSampleLocationsFX( 0 ),
 	mDisableDepthTestDS( 0 ),
 	mDisableDepthTestIncrStencilDS( 0 ),
+	mNoDepth_StEqual_IncrStencilDS( 0 ),
 	mSolidFillNoCullRS( 0 ),
 	mDefaultBS( 0 ),
 	mCameraSpaceZRTV( 0 ),
@@ -56,7 +57,8 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mRenderSliceUVDirInSMTech = mLightScatterFX->GetTechniqueByName("RenderSliceUVDirection");
 	mInitializeMinMaxShadowMapTech = mLightScatterFX->GetTechniqueByName("InitializeMinMaxShadowMap");
 	mComputeMinMaxShadowMapLevelTech = mLightScatterFX->GetTechniqueByName("ComputeMinMaxShadowMapLevel");
-	
+	mMarkRayMarchingSamplesInStencilTech = mLightScatterFX->GetTechniqueByName("MarkRayMarchingSamplesInStencil");
+
 	//
 	// Create states
 	//
@@ -88,6 +90,18 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	disableDepthIncrStencilDSDesc.StencilWriteMask = D3D11_DEFAULT_STENCIL_WRITE_MASK;
 	V( pd3dDevice->CreateDepthStencilState( &disableDepthIncrStencilDSDesc, &mDisableDepthTestIncrStencilDS ) );
 
+	// Disable depth testing, stencil testing function equal, increment stencil.
+	// This state is used to process only these pixels that were marked at the
+	// previous pass. All pixels with different stencil value are discarded from
+	// further processing as well as some pixels can also be discarded during the
+	// draw call. For instance, pixel shader marking ray marching samples processes
+	// only these pixels which are inside the screen. It also discards all but
+	// these samples which are interpolated from themselves.
+	D3D11_DEPTH_STENCIL_DESC disableDepthStencilEqualIncrStencilDSDesc = disableDepthIncrStencilDSDesc;
+	disableDepthStencilEqualIncrStencilDSDesc.FrontFace.StencilFunc = D3D11_COMPARISON_EQUAL;
+	disableDepthStencilEqualIncrStencilDSDesc.BackFace.StencilFunc = D3D11_COMPARISON_EQUAL;
+	V( pd3dDevice->CreateDepthStencilState( &disableDepthStencilEqualIncrStencilDSDesc, &mNoDepth_StEqual_IncrStencilDS ) );
+
 	D3D11_RASTERIZER_DESC solidFillNoCullRSDesc;
 	ZeroMemory( &solidFillNoCullRSDesc, sizeof(solidFillNoCullRSDesc) );
 	solidFillNoCullRSDesc.FillMode = D3D11_FILL_SOLID;
@@ -113,6 +127,7 @@ LightScatterPostProcess::~LightScatterPostProcess( void )
 
 	SAFE_RELEASE( mDisableDepthTestDS );
 	SAFE_RELEASE( mDisableDepthTestIncrStencilDS );
+	SAFE_RELEASE( mNoDepth_StEqual_IncrStencilDS );
 	SAFE_RELEASE( mSolidFillNoCullRS );
 	SAFE_RELEASE( mDefaultBS );
 
@@ -350,6 +365,7 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	Build1DMinMaxMipMap( pd3dDeviceContext, shadowMap );
 
 	// Step 6: Mark ray marching samples in stencil
+	MarkRayMarchingSamples( pd3dDeviceContext );
 }
 
 void LightScatterPostProcess::ReconstructCameraSpaceZ( ID3D11DeviceContext *pd3dDeviceContext,
@@ -599,6 +615,43 @@ void LightScatterPostProcess::Build1DMinMaxMipMap( ID3D11DeviceContext *pd3dDevi
 
 	SAFE_RELEASE( minMaxShadowMap0 );
 	SAFE_RELEASE( minMaxShadowMap1 );
+
+	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
+}
+
+void LightScatterPostProcess::MarkRayMarchingSamples( ID3D11DeviceContext *pd3dDeviceContext )
+{
+	pd3dDeviceContext->OMSetDepthStencilState( mNoDepth_StEqual_IncrStencilDS, 1 );
+	pd3dDeviceContext->RSSetState( mSolidFillNoCullRS );
+	float blendFactor[] = { 0, 0, 0, 0 };
+	pd3dDeviceContext->OMSetBlendState( mDefaultBS, blendFactor, 0xFFFFFFFF );
+
+	D3D11_VIEWPORT vp;
+	vp.TopLeftX = 0;
+	vp.TopLeftY = 0;
+	vp.Width = static_cast<float>( mMaxSamplesInSlice );
+	vp.Height = static_cast<float>( mNumEpipolarSlices );
+	vp.MinDepth = 0;
+	vp.MaxDepth = 1;
+	pd3dDeviceContext->RSSetViewports( 1, &vp );
+	
+	// Mark ray marching samples in the stencil.
+	// The depth stencil state is configured to pass only pixels whose stencil
+	// value equals 1. Thus all epipolar samples with coordinates outside of the
+	// screen (generated in the previous pass) are automatically discarded. The pixel
+	// shader only passes samples which are interpolated from themselves, the rest
+	// are discarded. Thus after this pass all ray marching samples will be marked
+	// with 2 in stencil.
+	ID3D11RenderTargetView *nullRTV = NULL;
+	pd3dDeviceContext->OMSetRenderTargets( 1, &nullRTV, mEpipolarImageDSV );
+	mLightScatterFX->GetVariableByName("gInterpolationSource")->AsShaderResource()->SetResource( mInterpolationSourceSRV );
+
+	mMarkRayMarchingSamplesInStencilTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+	pd3dDeviceContext->Draw( 3, 0 );
+	
+	// Unbind shader resources
+	mLightScatterFX->GetVariableByName("gInterpolationSource")->AsShaderResource()->SetResource( 0 );
+	mMarkRayMarchingSamplesInStencilTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
 
 	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
 }

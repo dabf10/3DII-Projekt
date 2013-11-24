@@ -47,6 +47,7 @@ private:
 	void RenderSliceUVDirection( ID3D11DeviceContext *pd3dDeviceContext );
 	void Build1DMinMaxMipMap( ID3D11DeviceContext *pd3dDeviceContext, ID3D11ShaderResourceView *shadowMap );
 	HRESULT CreateMinMaxShadowMap( ID3D11Device *pd3dDevice );
+	void MarkRayMarchingSamples( ID3D11DeviceContext *pd3dDeviceContext );
 
 	void CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx );
 	void CreateTextures( ID3D11Device *pd3dDevice );
@@ -74,10 +75,12 @@ private:
 	ID3DX11EffectTechnique *mRenderSliceUVDirInSMTech;
 	ID3DX11EffectTechnique *mInitializeMinMaxShadowMapTech;
 	ID3DX11EffectTechnique *mComputeMinMaxShadowMapLevelTech;
+	ID3DX11EffectTechnique *mMarkRayMarchingSamplesInStencilTech;
 
 	// States
 	ID3D11DepthStencilState *mDisableDepthTestDS;
 	ID3D11DepthStencilState *mDisableDepthTestIncrStencilDS;
+	ID3D11DepthStencilState *mNoDepth_StEqual_IncrStencilDS;
 	ID3D11RasterizerState *mSolidFillNoCullRS;
 	ID3D11BlendState *mDefaultBS;
 

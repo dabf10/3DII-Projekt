@@ -32,6 +32,8 @@ uint gSrcMinMaxLevelXOffset;
 uint gDstMinMaxLevelXOffset;
 float2 gShadowMapTexelSize;
 
+Texture2D<uint2> gInterpolationSource : register( t7 );
+
 SamplerState gSamLinearClamp : register( s0 )
 {
 	Filter = MIN_MAG_MIP_LINEAR;
@@ -578,5 +580,24 @@ technique11 ComputeMinMaxShadowMapLevel
 		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
 		SetGeometryShader( NULL );
 		SetPixelShader( CompileShader( ps_4_0, ComputeMinMaxShadowMapLevelPS() ) );
+	}
+}
+
+void MarkRayMarchingSamplesInStencilPS( FullScreenTriangleVSOut input )
+{
+	uint2 interpolationSource = gInterpolationSource.Load( uint3( input.PosH.xy, 0 ) );
+	// Ray marching samples are interpolated from themselves, so it is easy to
+	// detect them:
+	if (interpolationSource.x != interpolationSource.y)
+		discard;
+}
+
+technique11 MarkRayMarchingSamplesInStencil
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, MarkRayMarchingSamplesInStencilPS() ) );
 	}
 }
