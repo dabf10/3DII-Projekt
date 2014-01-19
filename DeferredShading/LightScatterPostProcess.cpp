@@ -2,11 +2,12 @@
 #include <sstream>
 #include <vector>
 
-LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
+LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext,
 	UINT backBufferWidth, UINT backBufferHeight, UINT maxSamplesInSlice,
 	UINT numEpipolarSlices, UINT initialSampleStepInSlice, float refinementThreshold,
 	UINT epipoleSamplingDensityFactor, UINT lightType, UINT minMaxShadowMapResolution,
-	UINT maxShadowMapStep ) :
+	UINT maxShadowMapStep, bool anisotropicPhaseFunction, float distanceScaler,
+	float maxTracingDistance ) :
 	mLightScatterFX( 0 ),
 	mRefineSampleLocationsFX( 0 ),
 	mDisableDepthTestDS( 0 ),
@@ -27,6 +28,11 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mInterpolationSourceUAV( 0 ),
 	mSliceUVDirAndOriginRTV( 0 ),
 	mSliceUVDirAndOriginSRV( 0 ),
+	mPrecomputedPointLightInsctrSRV( 0 ),
+	mInitialScatteredLightRTV( 0 ),
+	mInitialScatteredLightSRV( 0 ),
+	mScatteredLightRTV( 0 ),
+	mScatteredLightSRV( 0 ),
 	mMaxSamplesInSlice( maxSamplesInSlice ),
 	mNumEpipolarSlices( numEpipolarSlices ),
 	mInitialSampleStepInSlice( initialSampleStepInSlice ),
@@ -34,7 +40,11 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mEpipoleSamplingDensityFactor( epipoleSamplingDensityFactor ),
 	mLightType( lightType ),
 	mMinMaxShadowMapResolution( minMaxShadowMapResolution ),
-	mMaxShadowMapStep( maxShadowMapStep )
+	mMaxShadowMapStep( maxShadowMapStep ),
+	mAnisotropicPhaseFunction( anisotropicPhaseFunction ),
+	mDistanceScaler( distanceScaler ),
+	mMaxTracingDistance( maxTracingDistance ),
+	mTurbidity( 1.02f )
 {
 	for (int i = 0; i < 2; ++i)
 	{
@@ -58,6 +68,8 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 	mInitializeMinMaxShadowMapTech = mLightScatterFX->GetTechniqueByName("InitializeMinMaxShadowMap");
 	mComputeMinMaxShadowMapLevelTech = mLightScatterFX->GetTechniqueByName("ComputeMinMaxShadowMapLevel");
 	mMarkRayMarchingSamplesInStencilTech = mLightScatterFX->GetTechniqueByName("MarkRayMarchingSamplesInStencil");
+	mDoRayMarchTech = mLightScatterFX->GetTechniqueByName("DoRayMarch");
+	mPrecomputePointLightInsctrTech = mLightScatterFX->GetTechniqueByName("PrecomputePointLightInsctr");
 
 	//
 	// Create states
@@ -115,7 +127,7 @@ LightScatterPostProcess::LightScatterPostProcess( ID3D11Device *pd3dDevice,
 		defaultBlendStateDesc.RenderTarget[i].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 	V( pd3dDevice->CreateBlendState( &defaultBlendStateDesc, &mDefaultBS ) );
 
-	CreateTextures( pd3dDevice );
+	CreateTextures( pd3dDevice, pd3dDeviceContext );
 
 	Resize( pd3dDevice, backBufferWidth, backBufferHeight );
 }
@@ -149,6 +161,11 @@ LightScatterPostProcess::~LightScatterPostProcess( void )
 		SAFE_RELEASE( mMinMaxShadowMapRTV[i] );
 		SAFE_RELEASE( mMinMaxShadowMapSRV[i] );
 	}
+	SAFE_RELEASE( mPrecomputedPointLightInsctrSRV );
+	SAFE_RELEASE( mInitialScatteredLightRTV );
+	SAFE_RELEASE( mInitialScatteredLightSRV );
+	SAFE_RELEASE( mScatteredLightRTV );
+	SAFE_RELEASE( mScatteredLightSRV );
 }
 
 void LightScatterPostProcess::Resize( ID3D11Device *pd3dDevice, UINT width, UINT height )
@@ -183,7 +200,7 @@ void LightScatterPostProcess::Resize( ID3D11Device *pd3dDevice, UINT width, UINT
 	SAFE_RELEASE( camSpaceZTex );
 }
 
-void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice )
+void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext )
 {
 	HRESULT hr;
 
@@ -251,7 +268,25 @@ void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice )
 	}
 
 	{
-		// SCATTEREDLIGHT HERE
+		SAFE_RELEASE( mScatteredLightSRV );
+		SAFE_RELEASE( mScatteredLightRTV );
+		D3D11_TEXTURE2D_DESC scatteredLightTexDesc = coordinateTexDesc;
+		// R8G8B8A8_UNORM texture does not provide sufficient precision which causes
+		// interpolation artifacts especially noticeable in low intensity regions.
+		scatteredLightTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		ID3D11Texture2D *scatteredLight;
+		V( pd3dDevice->CreateTexture2D( &scatteredLightTexDesc, NULL, &scatteredLight ) );
+		V( pd3dDevice->CreateShaderResourceView( scatteredLight, NULL, &mScatteredLightSRV ) );
+		V( pd3dDevice->CreateRenderTargetView( scatteredLight, NULL, &mScatteredLightRTV ) );
+		SAFE_RELEASE( scatteredLight );
+
+		SAFE_RELEASE( mInitialScatteredLightSRV );
+		SAFE_RELEASE( mInitialScatteredLightRTV );
+		ID3D11Texture2D *initialScatteredLight;
+		V( pd3dDevice->CreateTexture2D( &scatteredLightTexDesc, NULL, &initialScatteredLight ) );
+		V( pd3dDevice->CreateShaderResourceView( initialScatteredLight, NULL, &mInitialScatteredLightSRV ) );
+		V( pd3dDevice->CreateRenderTargetView( initialScatteredLight, NULL, &mInitialScatteredLightRTV ) );
+		SAFE_RELEASE( initialScatteredLight );
 	}
 
 	{
@@ -280,6 +315,9 @@ void LightScatterPostProcess::CreateTextures( ID3D11Device *pd3dDevice )
 	}
 
 	V( CreateMinMaxShadowMap( pd3dDevice ) );
+
+	if (mLightType > 0) // Point or spot
+		V( CreatePrecomputedPointLightInscatteringTexture( pd3dDevice, pd3dDeviceContext ) );
 }
 
 HRESULT LightScatterPostProcess::CreateMinMaxShadowMap( ID3D11Device *pd3dDevice )
@@ -317,11 +355,120 @@ HRESULT LightScatterPostProcess::CreateMinMaxShadowMap( ID3D11Device *pd3dDevice
 	return S_OK;
 }
 
+void LightScatterPostProcess::ComputeSunColor( const XMFLOAT3 &directionOnSun,
+								XMFLOAT4 &sunColorAtGround,
+								XMFLOAT4 &ambientLight )
+{
+	// For details, see "A practical Analytic Model for Daylight" by Preetham & Hoffman
+
+	// First, set the direction on sun parameters
+
+	// Compute the ambient light values
+	float zenithFactor = min( max(directionOnSun.y, 0.0f), 1.0f);
+	ambientLight.x = zenithFactor * 0.3f;
+	ambientLight.y = zenithFactor * 0.2f;
+	ambientLight.z = 0.25f;
+	ambientLight.w = 0.0f;
+
+	// Compute theta as the angle from the noon (zenith) position in radians.
+	float theta = acos( directionOnSun.y );
+
+	// theta = (timeOfDay < XM_PI) ? timeOfDay : ((float)XM_PI*2 - timeOfDay);
+
+	theta = (theta < XM_PI) ? theta : ((float)XM_2PI - theta);
+
+	// Angles greater than the horizon are clamped.
+	theta = min( max(theta, 0.0f), (float)XM_PIDIV2);
+
+	// Beta is an Angstrom's turbidity coefficient and is approximated by:
+	float beta = 0.04608365822050f * mTurbidity - 0.04586025928522f;
+	float relativeOpticalMass = 1.0f / ( cosf(theta) + 0.15f * powf( (float)(98.885f - theta / XM_PI * 180.0f), -1.253f ) );
+
+	// Constants for lambda
+	float lambda[] =
+	{
+		0.65f, //red
+		0.57f, //green
+		0.475f //blue
+	};
+
+	// Compute the transmittance for each wave length
+	for (int i = 0; i < 3; ++i)
+	{
+		// Transmittance due to Rayleigh Scattering
+		float tauR = expf( -relativeOpticalMass * 0.008735f * powf(lambda[i], -4.08f));
+
+		// Aerosol (water + dust) attenuation
+		// Particle size ratio set at (alpha = 1.3)
+		// Alpha - ratio of small to large particle sizes. (0:4, usually 1.3)
+		const float alpha = 1.3f;
+		float tauA = expf( -relativeOpticalMass * beta * powf(lambda[i], -alpha));
+
+		((float*)&sunColorAtGround)[i] = tauR * tauA;
+	}
+
+	sunColorAtGround.w = 2;
+}
+
+HRESULT LightScatterPostProcess::CreatePrecomputedPointLightInscatteringTexture( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext )
+{
+	HRESULT hr;
+	SAFE_RELEASE( mPrecomputedPointLightInsctrSRV );
+
+	D3D11_TEXTURE2D_DESC CoordinateTexDesc =
+	{
+		512,													//UINT Width;
+		512,													//UINT Height;
+		1,														//UINT MipLevels;
+		1,														//UINT ArraySize;
+		DXGI_FORMAT_R32G32B32A32_FLOAT,							//DXGI_FORMAT Format;
+		{ 1, 0 },												//DXGI_SAMPLE_DESC SampleDesc;
+		D3D11_USAGE_DEFAULT,									//D3D11_USAGE Usage;
+		D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET,	//UINT BindFlags;
+		0,														//UINT CPUAccessFlags;
+		0,														//UINT MiscFlags;
+	};
+
+	ID3D11Texture2D *precomputedInsctrTex;
+	V_RETURN( pd3dDevice->CreateTexture2D( &CoordinateTexDesc, NULL, &precomputedInsctrTex ) );
+	V_RETURN( pd3dDevice->CreateShaderResourceView( precomputedInsctrTex, NULL, &mPrecomputedPointLightInsctrSRV ) );
+
+	ID3D11RenderTargetView *precomputedPointLightInsctrRTV;
+	V_RETURN (pd3dDevice->CreateRenderTargetView( precomputedInsctrTex, NULL, &precomputedPointLightInsctrRTV ) );
+
+	pd3dDeviceContext->OMSetDepthStencilState( mDisableDepthTestDS, 0 );
+	pd3dDeviceContext->RSSetState( mSolidFillNoCullRS );
+	float blendFactor[] = { 0, 0, 0, 0 };
+	pd3dDeviceContext->OMSetBlendState( mDefaultBS, blendFactor, 0xFFFFFFFF );
+
+	D3D11_VIEWPORT vp;
+	vp.TopLeftX = 0;
+	vp.TopLeftY = 0;
+	vp.Width = static_cast<float>( 512 );
+	vp.Height = static_cast<float>( 512 );
+	vp.MinDepth = 0;
+	vp.MaxDepth = 1;
+	pd3dDeviceContext->RSSetViewports( 1, &vp );
+	
+	pd3dDeviceContext->OMSetRenderTargets( 1, &precomputedPointLightInsctrRTV, NULL );
+
+	mPrecomputePointLightInsctrTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+	pd3dDeviceContext->Draw( 3, 0 );
+
+	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
+
+	SAFE_RELEASE( precomputedPointLightInsctrRTV );
+	SAFE_RELEASE( precomputedInsctrTex );
+
+	return S_OK;
+}
+
 void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDeviceContext,
 	ID3D11ShaderResourceView *sceneDepth, CXMMATRIX cameraProj, XMFLOAT2 screenResolution,
 	XMFLOAT4 lightScreenPos, CXMMATRIX viewProjInv, XMFLOAT4 cameraPos, XMFLOAT4 dirOnLight,
 	XMFLOAT4 lightWorldPos, XMFLOAT4 spotLightAxisAndCosAngle, CXMMATRIX worldToLightProj,
-	XMFLOAT4 cameraUVAndDepthInShadowMap, XMFLOAT2 shadowMapTexelSize, ID3D11ShaderResourceView *shadowMap )
+	XMFLOAT4 cameraUVAndDepthInShadowMap, XMFLOAT2 shadowMapTexelSize, ID3D11ShaderResourceView *shadowMap,
+	UINT shadowMapResolution, XMFLOAT4 lightColorAndIntensity, XMFLOAT4 rayleighBeta, XMFLOAT4 mieBeta )
 {
 	mRefineSampleLocationsFX->GetVariableByName("gLightScreenPos")->AsVector()->SetFloatVector((float*)&lightScreenPos);
 	mRefineSampleLocationsFX->GetVariableByName("gMaxSamplesInSlice")->AsScalar()->SetInt(mMaxSamplesInSlice);
@@ -339,6 +486,38 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 	mLightScatterFX->GetVariableByName("gWorldToLightProj")->AsMatrix()->SetMatrix((float*)&worldToLightProj);
 	mLightScatterFX->GetVariableByName("gCameraUVAndDepthInShadowMap")->AsVector()->SetFloatVector((float*)&cameraUVAndDepthInShadowMap);
 	mLightScatterFX->GetVariableByName("gShadowMapTexelSize")->AsVector()->SetFloatVector((float*)&shadowMapTexelSize);
+	mLightScatterFX->GetVariableByName("gMaxStepsAlongRay")->AsScalar()->SetInt( shadowMapResolution );
+
+	XMVECTOR totalRayleighBeta = XMLoadFloat4( &rayleighBeta );
+	const float rayleighBetaMultiplier = mDistanceScaler;
+	totalRayleighBeta *= rayleighBetaMultiplier;
+
+	XMVECTOR angularRayleighBeta = totalRayleighBeta * static_cast<float>(3.0/(16.0*XM_PI));
+
+	XMVECTOR totalMieBeta = XMLoadFloat4( &mieBeta );
+	const float betaMieMultiplier = 0.005f * mDistanceScaler;
+	totalMieBeta *= betaMieMultiplier;
+	XMVECTOR angularMieBeta = totalMieBeta / static_cast<float>(XM_PI*4);
+
+	XMVECTOR summTotalBeta = totalRayleighBeta + totalMieBeta;
+
+	const float GH_g = 0.98f;
+	XMFLOAT4 HG_g;
+	HG_g.x = 1 - GH_g*GH_g;
+	HG_g.y = 1 + GH_g*GH_g;
+	HG_g.z = -2*GH_g;
+	HG_g.w = 1.0;
+
+	mLightScatterFX->GetVariableByName("gMaxTracingDistance")->AsScalar()->SetFloat(mMaxTracingDistance);
+	mLightScatterFX->GetVariableByName("gMinMaxShadowMapResolution")->AsScalar()->SetInt(mMinMaxShadowMapResolution);
+	mLightScatterFX->GetVariableByName("gMaxShadowMapStep")->AsScalar()->SetFloat(mMaxShadowMapStep);
+	mLightScatterFX->GetVariableByName("gLightColorAndIntensity")->AsVector()->SetFloatVector((float*)&lightColorAndIntensity);
+	mLightScatterFX->GetVariableByName("gAngularRayleighBeta")->AsVector()->SetFloatVector((float*)&angularRayleighBeta);
+	mLightScatterFX->GetVariableByName("gTotalRayleighBeta")->AsVector()->SetFloatVector((float*)&totalRayleighBeta);
+	mLightScatterFX->GetVariableByName("gAngularMieBeta")->AsVector()->SetFloatVector((float*)&angularMieBeta);
+	mLightScatterFX->GetVariableByName("gTotalMieBeta")->AsVector()->SetFloatVector((float*)&totalMieBeta);
+	mLightScatterFX->GetVariableByName("gSummTotalBeta")->AsVector()->SetFloatVector((float*)&summTotalBeta);
+	mLightScatterFX->GetVariableByName("gHG_g")->AsVector()->SetFloatVector((float*)&HG_g);
 
 	// Step 1: Reconstruct camera space Z (convert post projection to linear)
 	// Requires: Scene depth, camera proj
@@ -366,6 +545,9 @@ void LightScatterPostProcess::PerformLightScatter( ID3D11DeviceContext *pd3dDevi
 
 	// Step 6: Mark ray marching samples in stencil
 	MarkRayMarchingSamples( pd3dDeviceContext );
+
+	// Step 7: Do Ray Marching for selected samples
+	DoRayMarching( pd3dDeviceContext, shadowMap );
 }
 
 void LightScatterPostProcess::ReconstructCameraSpaceZ( ID3D11DeviceContext *pd3dDeviceContext,
@@ -656,6 +838,48 @@ void LightScatterPostProcess::MarkRayMarchingSamples( ID3D11DeviceContext *pd3dD
 	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
 }
 
+void LightScatterPostProcess::DoRayMarching( ID3D11DeviceContext *pd3dDeviceContext, ID3D11ShaderResourceView *shadowMap )
+{
+	pd3dDeviceContext->OMSetDepthStencilState( mNoDepth_StEqual_IncrStencilDS, 2 );
+	pd3dDeviceContext->RSSetState( mSolidFillNoCullRS );
+	float blendFactor[] = { 0, 0, 0, 0 };
+	pd3dDeviceContext->OMSetBlendState( mDefaultBS, blendFactor, 0xFFFFFFFF );
+
+	D3D11_VIEWPORT vp;
+	vp.TopLeftX = 0;
+	vp.TopLeftY = 0;
+	vp.Width = static_cast<float>( mMaxSamplesInSlice );
+	vp.Height = static_cast<float>( mNumEpipolarSlices );
+	vp.MinDepth = 0;
+	vp.MaxDepth = 1;
+	pd3dDeviceContext->RSSetViewports( 1, &vp );
+	
+	pd3dDeviceContext->OMSetRenderTargets( 1, &mInitialScatteredLightRTV, mEpipolarImageDSV );
+	mLightScatterFX->GetVariableByName("gCamSpaceZ")->AsShaderResource()->SetResource( mCameraSpaceZSRV );
+	mLightScatterFX->GetVariableByName("gCoordinates")->AsShaderResource()->SetResource( mCoordinateTextureSRV );
+	mLightScatterFX->GetVariableByName("gSliceUVDirAndOrigin")->AsShaderResource()->SetResource( mSliceUVDirAndOriginSRV );
+	mLightScatterFX->GetVariableByName("gLightSpaceDepthMap")->AsShaderResource()->SetResource( shadowMap );
+	mLightScatterFX->GetVariableByName("gMinMaxLightSpaceDepth")->AsShaderResource()->SetResource( mMinMaxShadowMapSRV[0] );
+	mLightScatterFX->GetVariableByName("gPrecomputedPointLightInsctr")->AsShaderResource()->SetResource( mPrecomputedPointLightInsctrSRV );
+
+	// Depth stencil now contains 2 for these pixels, for which ray marching is to
+	// be performed. Depth stencil state is configured to pass only these pixels
+	// and discard the rest.
+	mDoRayMarchTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+	pd3dDeviceContext->Draw( 3, 0 );
+	
+	// Unbind shader resources
+	mLightScatterFX->GetVariableByName("gCamSpaceZ")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gCoordinates")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gSliceUVDirAndOrigin")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gLightSpaceDepthMap")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gMinMaxLightSpaceDepth")->AsShaderResource()->SetResource( 0 );
+	mLightScatterFX->GetVariableByName("gPrecomputedPointLightInsctr")->AsShaderResource()->SetResource( 0 );
+	mDoRayMarchTech->GetPassByIndex( 0 )->Apply( 0, pd3dDeviceContext );
+
+	pd3dDeviceContext->OMSetRenderTargets( 0, NULL, NULL );
+}
+
 void LightScatterPostProcess::CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx )
 {
 	DWORD shaderFlags = D3D10_SHADER_ENABLE_STRICTNESS;
@@ -673,6 +897,11 @@ void LightScatterPostProcess::CompileShader( ID3D11Device *pd3dDevice, const cha
 	std::string def = ss.str();
 	D3D10_SHADER_MACRO macro = { "LIGHT_TYPE", def.c_str() };
 	shaderMacros.push_back( macro );
+	std::stringstream ss2;
+	ss2 << mAnisotropicPhaseFunction;
+	std::string def2 = ss2.str();
+	D3D10_SHADER_MACRO macro2 = { "ANISOTROPIC_PHASE_FUNCTION", def2.c_str() };
+	shaderMacros.push_back( macro2 );
 
 	if (filename == "Shaders/RefineSampleLocations.fx")
 	{

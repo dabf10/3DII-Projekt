@@ -32,7 +32,24 @@ uint gSrcMinMaxLevelXOffset;
 uint gDstMinMaxLevelXOffset;
 float2 gShadowMapTexelSize;
 
+#ifndef ANISOTROPIC_PHASE_FUNCTION
+#   define ANISOTROPIC_PHASE_FUNCTION 1
+#endif
+#define PI 3.1415928f
 Texture2D<uint2> gInterpolationSource : register( t7 );
+Texture2D<float2> gCoordinates : register( t1 );
+Texture2D<float3> gPrecomputedPointLightInsctr : register( t6 );
+float gMaxTracingDistance;
+float gMaxStepsAlongRay;
+uint gMinMaxShadowMapResolution;
+float gMaxShadowMapStep;
+float4 gLightColorAndIntensity;
+float4 gAngularRayleighBeta;
+float4 gTotalRayleighBeta;
+float4 gAngularMieBeta;
+float4 gTotalMieBeta;
+float4 gSummTotalBeta;
+float4 gHG_g;
 
 SamplerState gSamLinearClamp : register( s0 )
 {
@@ -47,6 +64,15 @@ SamplerState gSamLinearBorder0 : register( s1 )
 	AddressU = Border;
 	AddressV = Border;
 	BorderColor = float4(0.0f, 0.0f, 0.0f, 0.0f);
+};
+
+SamplerComparisonState gSamComparison : register( s3 )
+{
+	Filter = COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+	AddressU = Border;
+	AddressV = Border;
+	ComparisonFunc = GREATER;
+	BorderColor = float4(0.0, 0.0, 0.0, 0.0);
 };
 
 struct FullScreenTriangleVSOut
@@ -88,6 +114,19 @@ technique11 ReconstructCameraSpaceZ
 float2 ProjToUV( in float2 projSpaceXY )
 {
 	return float2(0.5, 0.5) + float2(0.5, -0.5) * projSpaceXY;
+}
+
+float4 WorldSpaceToShadowMapUV(in float3 posWS)
+{
+	float4 lightProjSpacePos = mul( float4(posWS, 1), gWorldToLightProj );
+	lightProjSpacePos.xyz /= lightProjSpacePos.w;
+	float4 uvAndDepthInLightSpace;
+	uvAndDepthInLightSpace.xy = ProjToUV( lightProjSpacePos.xy );
+	// Applying depth bias results in light leaking through the opaque objects
+	// when looking directly at the light source.
+	uvAndDepthInLightSpace.z = lightProjSpacePos.z; // * gDepthBiasMultiplier;
+	uvAndDepthInLightSpace.w = 1 / lightProjSpacePos.w;
+	return uvAndDepthInLightSpace;
 }
 
 const float4 GetOutermostScreenPixelCoords( )
@@ -599,5 +638,438 @@ technique11 MarkRayMarchingSamplesInStencil
 		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
 		SetGeometryShader( NULL );
 		SetPixelShader( CompileShader( ps_4_0, MarkRayMarchingSamplesInStencilPS() ) );
+	}
+}
+
+float3 ApplyPhaseFunction(in float3 insctrIntegral, in float cosTheta)
+{
+	//    sun
+    //      \
+    //       \
+    //    ----\------eye
+    //         \theta 
+    //          \
+    //
+
+	// Compute Rayleigh scattering Phase Function
+	// According to formula for the Rayleigh Scattering phase function presented
+	// in the "Rendering Outdoor Light Scattering in Real Time" by Hoffman and
+	// Preetham, BethaR(Theta) is calculated as follows:
+	// 3/(16PI) * BethaR * (1+cos^2(theta))
+	// gAngularRayleighBeta == (3*PI/16) * gTotalRayleighBeta, hence:
+	float3 RayleighScatteringPhaseFunc = gAngularRayleighBeta.rgb * (1.0 + cosTheta*cosTheta);
+
+	// Compute Henyey-Greenstein approximation of the Mie scattering Phase Function.
+	// According to formula for the Mie Scattering phase function presented in the
+	// "Rendering Outdoor Light Scattering in Real Time" by Hoffman and Preetham,
+	// BethaR(Theta) is calculated as follows:
+	// 1/(4PI) * BethaM * (1-g^2)/(1+g^2-2g*cos(theta))^(3/2)
+	// const float4 gHG_g = float4(1 - g*g, 1 + g*g, -2*g, 1);
+	float HGTemp = rsqrt( dot(gHG_g.yz, float2(1.f, cosTheta)) );
+	// gAngularMieBeta is calculated according to formula presented in "A practical
+	// Analytic Model for Daylight" by Preetham & Hoffman
+	float3 mieScatteringPhaseFunc_HGApprox = gAngularMieBeta.rgb * gHG_g.x * (HGTemp*HGTemp*HGTemp);
+
+	float3 inscatteredLight = insctrIntegral * (RayleighScatteringPhaseFunc + mieScatteringPhaseFunc_HGApprox);
+
+	inscatteredLight.rgb *= gLightColorAndIntensity.w;
+
+	return inscatteredLight;
+}
+
+float3 CalculateInscattering( in float2 rayMarchingSampleLocation,
+							  in uniform const bool applyPhaseFunction = false,
+							  in uniform const bool use1DMinMaxMipMap = false,
+							  uint epipolarSliceIndex = 0 )
+{
+	float3 reconstructedPos = ProjSpaceXYToWorldSpace( rayMarchingSampleLocation );
+
+	float3 rayStartPos = gCameraPos.xyz;
+	float3 rayEndPos = reconstructedPos;
+	float3 eyeVector = rayEndPos.xyz - rayStartPos;
+	float traceLength = length(eyeVector);
+	eyeVector /= traceLength;
+
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+	// Update end position
+	traceLength = min(traceLength, gMaxTracingDistance);
+	rayEndPos = gCameraPos.xyz + traceLength * eyeVector;
+#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+
+	//					Light
+	//					  *					-
+	//				   .' |\				|
+	//				 .'	  | \				| closestDistToLight
+	//			   .'	  |  \				|
+	//			 .'		  |   \				|
+	//		Cam *--------------*------->	-
+	//			|<------->|     \
+	//				\
+	//			startDistFromProjection
+
+	float distToLight = length( gLightWorldPos.xyz - gCameraPos.xyz );
+	float cosLV = dot( gDirOnLight.xyz, eyeVector );
+	float distToClosestToLightPoint = distToLight * cosLV;
+	float closestDistToLight = distToLight * sqrt(1 - cosLV * cosLV);
+	float v = closestDistToLight / gMaxTracingDistance;
+
+	float3 closestPointToLight = gCameraPos.xyz + eyeVector * distToClosestToLightPoint;
+
+	float cameraU = GetPrecomputedPtLghtSrcTexU( gCameraPos.xyz, eyeVector, closestPointToLight );
+	float reconstrPointU = GetPrecomputedPtLghtSrcTexU( reconstructedPos, eyeVector, closestPointToLight );
+
+	float3 cameraInsctrIntegral = gPrecomputedPointLightInsctr.SampleLevel( gSamLinearClamp, float2(cameraU, v), 0);
+	float3 rayTerminationInsctrIntegral = exp(-traceLength * gSummTotalBeta.rgb) * gPrecomputedPointLightInsctr.SampleLevel( gSamLinearClamp, float2( reconstrPointU, v), 0 );
+
+	float3 fullyLitInsctrIntegral = (cameraInsctrIntegral - rayTerminationInsctrIntegral) *
+									gLightColorAndIntensity.rgb * gLightColorAndIntensity.w;
+
+	bool isCamInsideCone = dot( -gDirOnLight.xyz, gSpotLightAxisAndCosAngle.xyz) > gSpotLightAxisAndCosAngle.w;
+
+	// Eye rays directed at exactly the light source requires special handling.
+	if (cosLV > 1 - 1e-6)
+	{
+		float isInLight = bIsCamInsideCone ?
+			gLightSpaceDepthMap.SampleCmpLevelZero( gSamComparison, gCameraUVAndDepthInShadowMap.xy, gCameraUVAndDepthInShadowMap.z ).x :
+			1;
+
+		// This term is required to eliminate bright point visible through scene
+		// geometry when the camera is outside the light cone.
+		float isLightVisible = bIsCamInsideCone || (distToLight < traceLength);
+		return fullyLitInsctrIntegral * isInLight * isLightVisible;
+	}
+
+	float startDistance;
+	TruncateEyeRayToLightCone( eyeVector, rayStartPos, rayEndPos, traceLength, startDistance, isCamInsideCone );
+
+#endif
+
+	// If tracing distance is very short, we can fall into an infinite loop due
+	// to 0 length step and crash the driver. Return from function in this case.
+	if (traceLength < gMaxTracingDistance * 0.0001)
+	{
+#if LIGHT_TYPE == LIGHT_TYPE_POINT
+		return fullyLitInsctrIntegral;
+#else
+		return float3(0,0,0);
+#endif
+	}
+
+	// We trace the ray not in the world space, but in the light projection space.
+
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+	// Get start and end positions of the ray in the light projection space
+	float4 startUVAndDepthInLightSpace = float4(gCameraUVAndDepthInShadowMap.xyz, 1);
+#elif LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE_SPOT
+	float4 startUVAndDepthInLightSpace = WorldSpaceToShadowMapUV( rayStartPos );
+#endif
+
+	// Compute shadow map UV coordinates of the ray end point and its depth in the
+	// light space.
+	float4 endUVAndDepthInLightSpace = WorldSpaceToShadowMapUV( rayEndPos );
+
+	// Calculate normalized trace direction in the light projection space and its length
+	float3 shadowMapTraceDir = endUVAndDepthInLightSpace.xyz - startUVAndDepthInLightSpace.xyz;
+
+	// If the ray is directed exactly at the light source, trace length will be zero.
+	// Clamp to a very small positive value to avoid division by zero.
+	// Also assure that trace length is not longer than maximum meaningful length.
+	float traceLengthInShadowMapUVSpace = clamp( length( shadowMapTraceDir.xy ), 1e-6, sqrt(2.f) );
+	shadowMapTraceDir /= traceLengthInShadowMapUVSpace;
+
+	float shadowMapUVStepLength = 0;
+	float2 sliceOriginUV = 0;
+	if (use1DMinMaxMipMap)
+	{
+		// Get UV direction for this slice
+		float4 sliceUVDirAndOrigin = gSliceUVDirAndOrigin.Load( uint3(epipolarSliceIndex, 0, 0) );
+		if (all(sliceUVDirAndOrigin == gIncorrectSliceUVDirAndStart))
+		{
+#if LIGHT_TYPE == LIGHT_TYPE_POINT
+			return fullyLitInsctrIntegral;
+#else
+			return float3(0,0,0);
+#endif
+		}
+
+		// Scale with the shadow map texel size.
+		shadowMapUVStepLength = length(sliceUVDirAndOrigin.xy * gShadowMapTexelSize);
+		sliceOriginUV = sliceUVDirAndOrigin.zw;
+	}
+	else
+	{
+		// Calculate length of the trace step in light projection space.
+		shadowMapUVStepLength = gShadowMapTexelSize.x / max(abs(shadowMapTraceDir.x), abs(shadowMapTraceDir.y));
+
+		// Take into account maximum number of steps specified by gMaxStepsAlongRay
+		shadowMapUVStepLength = max(traceLengthInShadowMapUVSpace / gMaxStepsAlongRay, shadowMapUVStepLength);
+	}
+
+	// Calculate ray step length in world space.
+	float rayStepLengthWS = traceLength * (shadowMapUVStepLength / traceLengthInShadowMapUVSpace);
+
+	// Assure that step length is not 0 so that we will not fall into an infinite
+	// loop and will not crash the driver.
+	//rayStepLengthWS = max(rayStepLengthWS, gMaxTracingDistance * 1e-5);
+
+	// Scale trace direction in light projection space to calculate the final step.
+	float3 shadowMapUVAndDepthStep = shadowMapTraceDir * shadowMapUVStepLength;
+
+	float3 inScatteringIntegral = 0;
+	float3 prevInsctrIntegralValue = 1; // exp( -0 * gSummTotalBeta.rgb );
+	// March the ray
+	float totalMarchedDistance = 0;
+	float totalMarchedDistInUVSpace = 0;
+	float3 currShadowMapUVAndDepthInLightSpace = startUVAndDepthInLightSpace.xyz;
+
+	// The following variables are used only if 1D min map optimization is enabled.
+	uint minLevel = 0; // max( log2( (traceLengthInShadowMapUVSpace / shadowMapUVStepLength) / gMaxStepsAlongRay), 0);
+	uint currSamplePos = 0;
+
+	// For spot light, the slice start UV is either location of camera in light proj
+	// space or intersection of the slice with the cone rib. No adjustment is
+	// required in either case.
+#if LIGHT_TYPE == LIGHT_TYPE_POINT || LIGHT_TYPE == LIGHT_TYPE_SPOT
+	float insctrTexStartU = GetPrecomputedPtLghtSrcTexU( rayStartPos, eyeVector, closestPointToLight );
+	float insctrTexEndU = GetPrecomputedPtLghtSrcTexU( rayEndPos, eyeVector, closestPointToLight );
+
+#	if LIGHT_TYPE == LIGHT_TYPE_POINT
+	// Add inscattering contribution outside the light cone.
+	inScatteringIntegral = (cameraInsctrIntegral - prevInsctrIntegralValue + exp(-(startDistance + traceLength) * gSummTotalBeta.rgb) * gPrecomputedPointLightInsctr.SampleLevel(gSamLinearClamp, float2(insctrTexEndU, v), 0) - rayTerminationInsctrIntegral ) * gLightColorAndIntensity.rgb;
+#	endif
+#endif
+
+	uint currTreeLevel = 0;
+	// Note that min/max shadow map does not contain finest resolution level.
+	// The first level it contains corresponds to step == 2
+	int levelDataOffset = -int(gMinMaxShadowMapResolution);
+	float step = 1.f;
+	float maxShadowMapStep = gMaxShadowMapStep;
+
+	[loop]
+	while (totalMarchedDistInUVSpace < traceLengthInShadowMapUVSpace)
+	{
+		// Clamp depth to a very small positive value to not let the shadow rays
+		// get clipped at the shadow map far clipping plane.
+		float currDepthInLightSpace = max(currShadowMapUVAndDepthInLightSpace.z, 1e-7);
+		float isInLight = 0;
+
+		if (use1DMinMaxMipMap)
+		{
+			// If the step is smaller than the maximum allowed and the sample is
+			// located at the appropriate position, advance to the next coarser level.
+			if (step < maxShadowMapStep && ((currSamplePos & ((2 << currTreeLevel) - 1)) == 0))
+			{
+				levelDataOffset += gMinMaxShadowMapResolution >> currTreeLevel;
+				currTreeLevel++;
+				step *= 2.f;
+			}
+
+			while (currTreeLevel > minLevel)
+			{
+				// Compute light space depths at the ends of the current ray section
+				
+				// What we need here is actually depth which is divided by the
+				// camera view space z. Thus depth can be correctly interpolated
+				// in screen space:
+                // http://www.comp.nus.edu.sg/~lowkl/publications/lowk_persp_interp_techrep.pdf
+				// A subtle moment here is that we need to be sure that we can skip
+				// step samples starting from 0 up to step-1. We do not need to do
+				// any checks against the sample step away:
+				//
+                //     --------------->
+                //
+                //          *
+                //               *         *
+                //     *              *     
+                //     0    1    2    3
+                //
+                //     |------------------>|
+                //           step = 4
+				float nextLightSpaceDepth = currShadowMapUVAndDepthInLightSpace.z + shadowMapUVAndDepthStep.z * (step-1);
+				float2 startEndDepthOnRaySection = float2(currShadowMapUVAndDepthInLightSpace.z, nextLightSpaceDepth);
+				startEndDepthOnRaySection = max(startEndDepthOnRaySection, 1e-7);
+
+				// Load 1D min/max depths.
+				float4 currMinMaxDepth = gMinMaxLightSpaceDepth.Load( uint3( (currSamplePos >> currTreeLevel) + levelDataOffset, epipolarSliceIndex, 0) ).xyxy;
+
+				isInLight = all( startEndDepthOnRaySection >= currMinMaxDepth.yw );
+
+				bool isInShadow = all( startEndDepthOnRaySection < currMinMaxDepth.xz );
+
+				if (isInLight || isInShadow)
+					// If the ray section is fully lit or shadow, we can break the loop.
+					break;
+				// If the ray section is neither fully lit nor shadowed, we have to
+				// go to the finer level.
+				currTreeLevel--;
+				levelDataOffset -= gMinMaxShadowMapResolution >> currTreeLevel;
+				step /= 2.f;
+			};
+
+			// If we are at the finest level, sample the shadow map with PCF
+			[branch]
+			if (currTreeLevel <= minLevel)
+			{
+				isInLight = gLightSpaceDepthMap.SampleCmpLevelZero( gSamComparison, currShadowMapUVAndDepthInLightSpace.xy, currDepthInLightSpace ).x;
+			}
+		}
+		else
+		{
+			isInLight = gLightSpaceDepthMap.SampleCmpLevelZero( gSamComparison, currShadowMapUVAndDepthInLightSpace.xy, currDepthInLightSpace ).x;
+		}
+
+		float3 lightColorInCurrPoint = gLightColorAndIntensity.rgb;
+
+		currShadowMapUVAndDepthInLightSpace += shadowMapUVAndDepthStep * step;
+		totalMarchedDistInUVSpace += shadowMapUVStepLength * step;
+		currSamplePos += 1 << currTreeLevel; // int -> float conversions are slow
+
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+		totalMarchedDistance += rayStepLengthWS * step;
+		float integrationDist = min(totalMarchedDistance, traceLength);
+
+		// Calculate inscattering integral from the camera to the current point
+		// analytically:
+		float3 currInscatteringIntegralValue = exp( -integrationDist * gSummTotalBeta.rgb );
+#elif LIGHT_TYPE == LIGHT_TYPE_SPOT || LIGHT_TYPE == LIGHT_TYPE_POINT
+		// http://www.comp.nus.edu.sg/~lowkl/publications/lowk_persp_interp_techrep.pdf
+        // An attribute A itself cannot be correctly interpolated in screen space.
+		// However, A/z where z is the camera view space coordinate, does interpolate
+		// correctly. 1/z also interpolates correctly, thus to properly interpolate
+		// A it is necessary to do the following: lerp(A/z) / lerp(1/z)
+		// Note that since eye ray directed at exactly the light source is handled
+		// separately, camera space z can never become zero.
+		float relativePos = saturate(totalMarchedDistInUVSpace / traceLengthInShadowMapUVSpace);
+		float currW = lerp(startUVAndDepthInLightSpace.w, endUVAndDepthInLightSpace.w, relativePos);
+		float distFromCamera = lerp(startDistance * startUVAndDepthInLightSpace.w, (startDistance + traceLength) * endUVAndDepthInLightSpace.w, relativePos) / currW;
+		float currU = lerp(insctrTexStartU * startUVAndDepthInLightSpace.w, insctrTexEndU * endUVAndDepthInLightSpace.w, relativePos) / currW;
+		float3 currInscatteringIntegralValue = exp(-distFromCamera * gSummTotalBeta.rgb) * gPrecomputedPointLightInsctr.SampleLevel(gSamLinearClamp, float2(currU, v), 0);
+#endif
+
+		float3 scatteredLight;
+		// scatteredLight contains correct scattering light value with respect to
+		// extinction.
+		scatteredLight.rgb = (prevInsctrIntegralValue.rgb - currInscatteringIntegralValue.rgb) * isInLight;
+		scatteredLight.rgb *= lightColorInCurrPoint;
+		inScatteringIntegral.rgb += scatteredLight.rgb;
+
+		prevInsctrIntegralValue.rgb = currInscatteringIntegralValue.rgb;
+	}
+
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+	inScatteringIntegral = inScatteringIntegral / gSummTotalBeta.rgb;
+#else
+	inScatteringIntegral = gLightColorAndIntensity.w;
+#endif
+
+#if LIGHT_TYPE == LIGHT_TYPE_DIRECTIONAL
+	if (applyPhaseFunction)
+		return ApplyPhaseFunction(inScatteringIntegral, dot(eyeVector, gDirOnLight.xyz));
+	else
+#endif
+		return inScatteringIntegral;
+}
+
+float3 RayMarchMinMaxOptPS( FullScreenTriangleVSOut input ) : SV_TARGET
+{
+	uint2 samplePosSliceIndex = uint2( input.PosH.xy );
+	float2 sampleLocation = gCoordinates.Load( uint3( samplePosSliceIndex, 0 ) );
+
+	[branch]
+	if (any(abs(sampleLocation) > 1+1e-3))
+		return 0;
+
+	return CalculateInscattering(sampleLocation,
+		false, // Don't apply phase function
+		true, // Use min/max optimization
+		samplePosSliceIndex.y);
+}
+
+technique11 DoRayMarch
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, RayMarchMinMaxOptPS() ) );
+	}
+}
+
+float3 EvaluatePhaseFunction(float cosTheta)
+{
+#if ANISOTROPIC_PHASE_FUNCTION
+	float3 rlghInsctr = gAngularRayleighBeta.rgb * (1.0 * cosTheta*cosTheta);
+	float HGTemp = rsqrt( dot(gHG_g.yz, float2(1.f, cosTheta)) );
+	float3 mieInsctr = gAngularMieBeta.rgb * gHG_g.x * (HGTemp*HGTemp*HGTemp);
+#else
+	float3 rlghInsctr = gTotalRayleighBeta.rgb / (4.0*PI);
+	float3 mieInsctr = gTotalMieBeta.rgb / (4.0*PI);
+#endif
+
+	return rlghInsctr + mieInsctr;
+}
+
+float3 PrecomputePointLightInsctrPS( FullScreenTriangleVSOut input ) : SV_TARGET
+{
+	float maxTracingDistance = gMaxTracingDistance;
+	//                       Light
+    //                        *                   -
+    //                     .' |\                  |
+    //                   .'   | \                 | closestDistToLight
+    //                 .'     |  \                |
+    //               .'       |   \               |
+    //          Cam *--------------*--------->    -
+    //              |<--------|     \
+    //                  \
+    //                  startDistFromProjection
+    //
+	float2 uv = input.TexC;
+	float startDistFromProjection = input.PosH.x * maxTracingDistance;
+	float closestDistToLight = uv.y * maxTracingDistance;
+
+	float3 insctrRadiance = 0;
+
+	// There is a very important property: pre-computed scattering must be
+	// monotonical with respect to u coordinate. However, if we simply subdivide
+	// the tracing distance onto the equal number of steps as in the following
+	// code, we cannot guarantee this.
+	//
+	// float stepWorldLen = length(startPos - endPos) / numSteps;
+	// for (float relativePos = 0; relativePos < 1; relativePos += 1.f / numSteps)
+	// {
+	//		float2 currPos = lerp(startPos, endPos, relativePos);
+	//		...
+	//
+	// To assure that the scattering is monotonically increasing, we must go through
+	// exactly the same taps for all pre-computations. The simple method to achieve
+	// this is to make the world step the same as the difference between two
+	// neighboring texels: The step can also be integral part of it, but not
+	// greater! So /2 will work, but *2 won't!
+	float stepWorldLen = ddx(startDistFromProjection);
+	for (float distFromProj = startDistFromProjection; distFromProj < maxTracingDistance; distFromProj += stepWorldLen)
+	{
+		float2 currPos = float2(distFromProj, -closestDistToLight);
+		float distToLightSqr = dot(currPos, currPos);
+		float distToLight = sqrt(distToLightSqr);
+		float distToCam = currPos.x - startDistFromProjection;
+		float3 extinction = exp( -(distToCam + distToLight) * gSummTotalBeta.rgb );
+		float2 lightDir = normalize(currPos);
+		float cosTheta = -lightDir.x;
+
+		float3 dLInsctr = extinction * EvaluatePhaseFunction(cosTheta) * stepWorldLen / max(distToLightSqr, maxTracingDistance * maxTracingDistance * 1e-8);
+		insctrRadiance += dLInsctr;
+	}
+
+	return insctrRadiance;
+}
+
+technique11 PrecomputePointLightInsctr
+{
+	pass p0
+	{
+		SetVertexShader( CompileShader( vs_4_0, FullScreenTriangleVS() ) );
+		SetGeometryShader( NULL );
+		SetPixelShader( CompileShader( ps_4_0, PrecomputePointLightInsctrPS() ) );
 	}
 }

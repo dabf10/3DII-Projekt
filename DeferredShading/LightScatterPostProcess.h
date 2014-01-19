@@ -8,11 +8,13 @@
 class LightScatterPostProcess
 {
 public:
-	LightScatterPostProcess( ID3D11Device *pd3dDevice, UINT backBufferWidth,
+	LightScatterPostProcess( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext,
+		UINT backBufferWidth,
 		UINT backBufferHeight, UINT maxSamplesInSlice, UINT numEpipolarSlices,
 		UINT initialSampleStepInSlice, float refinementThreshold,
 		UINT epipoleSamplingDensityFactor, UINT lightType, UINT minMaxShadowMapResolution,
-		UINT maxShadowMapStep );
+		UINT maxShadowMapStep, bool anisotropicPhaseFunction, float distanceScaler,
+		float maxTracingDistance );
 	~LightScatterPostProcess( void );
 
 	void PerformLightScatter( ID3D11DeviceContext *pd3dDeviceContext,
@@ -21,9 +23,13 @@ public:
 		XMFLOAT4 cameraPos, XMFLOAT4 dirOnLight, XMFLOAT4 lightWorldPos,
 		XMFLOAT4 spotLightAxisAndCosAngle, CXMMATRIX worldToLightProj,
 		XMFLOAT4 cameraUVAndDepthInShadowMap, XMFLOAT2 shadowMapTexelSize,
-		ID3D11ShaderResourceView *shadowMap );
+		ID3D11ShaderResourceView *shadowMap, UINT shadowMapResolution,
+		XMFLOAT4 lightColorAndIntensity, XMFLOAT4 rayleighBeta, XMFLOAT4 mieBeta );
 
 	void Resize( ID3D11Device *pd3dDevice, UINT width, UINT height );
+	void ComputeSunColor( const XMFLOAT3 &directionOnSun,
+								XMFLOAT4 &sunColorAtGround,
+								XMFLOAT4 &ambientLight );
 
 	ID3D11ShaderResourceView *CameraSpaceZ( void ) const { return mCameraSpaceZSRV; }
 	ID3D11ShaderResourceView *SliceEndpoints( void ) const { return mSliceEndpointsSRV; }
@@ -34,6 +40,9 @@ public:
 	ID3D11ShaderResourceView *SliceUVDirAndOrigin( void ) const { return mSliceUVDirAndOriginSRV; }
 	ID3D11ShaderResourceView *MinMaxShadowMap0( void ) const { return mMinMaxShadowMapSRV[0]; }
 	ID3D11ShaderResourceView *MinMaxShadowMap1( void ) const { return mMinMaxShadowMapSRV[1]; }
+	ID3D11ShaderResourceView *PrecomputedPointLightInsctr( void ) const { return mPrecomputedPointLightInsctrSRV; }
+	ID3D11ShaderResourceView *InitialScatteredLight( void ) const { return mInitialScatteredLightSRV; }
+	ID3D11ShaderResourceView *ScatteredLight( void ) const { return mScatteredLightSRV; }
 
 private:
 	LightScatterPostProcess &operator=( const LightScatterPostProcess &rhs );
@@ -48,9 +57,11 @@ private:
 	void Build1DMinMaxMipMap( ID3D11DeviceContext *pd3dDeviceContext, ID3D11ShaderResourceView *shadowMap );
 	HRESULT CreateMinMaxShadowMap( ID3D11Device *pd3dDevice );
 	void MarkRayMarchingSamples( ID3D11DeviceContext *pd3dDeviceContext );
+	void DoRayMarching( ID3D11DeviceContext *pd3dDeviceContext, ID3D11ShaderResourceView *shadowMap );
+	HRESULT CreatePrecomputedPointLightInscatteringTexture( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext );
 
 	void CompileShader( ID3D11Device *pd3dDevice, const char *filename, ID3DX11Effect **fx );
-	void CreateTextures( ID3D11Device *pd3dDevice );
+	void CreateTextures( ID3D11Device *pd3dDevice, ID3D11DeviceContext *pd3dDeviceContext );
 
 private:
 	UINT mBackBufferWidth;
@@ -64,6 +75,10 @@ private:
 	UINT mLightType;
 	UINT mMinMaxShadowMapResolution;
 	UINT mMaxShadowMapStep;
+	bool mAnisotropicPhaseFunction;
+	float mDistanceScaler;
+	float mMaxTracingDistance;
+	float mTurbidity;
 
 	// Effect and techniques
 	ID3DX11Effect *mLightScatterFX;
@@ -76,6 +91,8 @@ private:
 	ID3DX11EffectTechnique *mInitializeMinMaxShadowMapTech;
 	ID3DX11EffectTechnique *mComputeMinMaxShadowMapLevelTech;
 	ID3DX11EffectTechnique *mMarkRayMarchingSamplesInStencilTech;
+	ID3DX11EffectTechnique *mDoRayMarchTech;
+	ID3DX11EffectTechnique *mPrecomputePointLightInsctrTech;
 
 	// States
 	ID3D11DepthStencilState *mDisableDepthTestDS;
@@ -100,6 +117,11 @@ private:
 	ID3D11ShaderResourceView *mSliceUVDirAndOriginSRV;
 	ID3D11RenderTargetView *mMinMaxShadowMapRTV[2];
 	ID3D11ShaderResourceView *mMinMaxShadowMapSRV[2];
+	ID3D11RenderTargetView *mInitialScatteredLightRTV;
+	ID3D11ShaderResourceView *mInitialScatteredLightSRV;
+	ID3D11RenderTargetView *mScatteredLightRTV;
+	ID3D11ShaderResourceView *mScatteredLightSRV;
+	ID3D11ShaderResourceView *mPrecomputedPointLightInsctrSRV;
 };
 
 #endif // _LIGHT_SCATTER_POST_PROCESS_H_

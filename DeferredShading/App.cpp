@@ -166,11 +166,16 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullFront ) );
 	rsDesc.CullMode = D3D11_CULL_NONE;
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullNone ) );
+	
+	float sceneExtent = 80;
+	float maxTracingDistance = sceneExtent * 1.5f;
+	float distanceScaler = 60000.f / maxTracingDistance;
 
 	mLightSctrPostProcess->OnCreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() );
-	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice,
+	mLightScatterPostProcess = new LightScatterPostProcess( pd3dDevice, DXUTGetD3D11DeviceContext(),
 		pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height, 512, 1024,
-		16, 20.0f, 4, 0, 2048, 2048 / 32 );
+		16, 20.0f, 4, 0, 2048, 2048 / 32, false, distanceScaler, maxTracingDistance
+		);
     
 	return S_OK;
 }
@@ -610,10 +615,25 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			1.0f / static_cast<float>(mShadowMap->Resolution()),
 			1.0f / static_cast<float>(mShadowMap->Resolution()));
 
+
+		XMFLOAT4 lightColorAndIntensity, ambientLight;
+		mLightScatterPostProcess->ComputeSunColor( XMFLOAT3(dirOnLight.x, dirOnLight.y, dirOnLight.x), lightColorAndIntensity, ambientLight );
+		lightColorAndIntensity.w = 12.0f;
+
+		static XMFLOAT4 mieBeta = XMFLOAT4( 2.0e-5f, 2.0e-5f, 2.0e-5f, 0.f );
+		static XMFLOAT4 rayleighBeta = XMFLOAT4( 5.8e-6f, 13.5e-6f, 33.1e-6f, 0.f );
+		float mieX = 2.0e-5f; // m_f4MieBeta.x;
+		XMFLOAT4 mieColor = XMFLOAT4( mieBeta.x / mieX, mieBeta.y / mieX, mieBeta.z / mieX, mieBeta.w / mieX );
+		mieBeta = XMFLOAT4( mieColor.x * mieX, mieColor.y * mieX, mieColor.z * mieX, mieColor.w * mieX );
+		float rlghZ = 33.1e-6f; // m_f4RayleighBeta.z;
+		XMFLOAT4 rlghColor = XMFLOAT4( rayleighBeta.x / rlghZ, rayleighBeta.y / rlghZ, rayleighBeta.z / rlghZ, rayleighBeta.w / rlghZ );
+		rayleighBeta = XMFLOAT4( rlghColor.x * rlghZ, rlghColor.y * rlghZ, rlghColor.z * rlghZ, rlghColor.w * rlghZ );
+		
 		mLightScatterPostProcess->PerformLightScatter( pd3dImmediateContext, mMainDepthSRV, mCamera.Proj(),
 			XMFLOAT2(mBackBufferSurfaceDesc->Width, mBackBufferSurfaceDesc->Height), lightScreenPos,
 			viewProjInv, cameraPos, dirOnLight, XMFLOAT4(0, 0, 0, 0), XMFLOAT4(0, 0, 1, 0), worldToLightProj,
-			cameraUVAndDepthInShadowMap, shadowMapTexelSize, mShadowMap->DepthMapSRV() );
+			cameraUVAndDepthInShadowMap, shadowMapTexelSize, mShadowMap->DepthMapSRV(), mShadowMap->Resolution(),
+			lightColorAndIntensity, rayleighBeta, mieBeta );
 
 		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 		pd3dImmediateContext->OMSetDepthStencilState( NULL, 0 );
