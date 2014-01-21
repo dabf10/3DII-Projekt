@@ -413,6 +413,7 @@
     <ClCompile Include="DXUT\Optional\SDKmesh.cpp" />
     <ClCompile Include="DXUT\Optional\SDKmisc.cpp" />
     <None Include="Shaders\BilateralBlur.fx" />
+    <None Include="Shaders\CapsuleLight.fx" />
     <None Include="Shaders\ClearGBuffer.fx" />
     <None Include="Shaders\CombineLight.fx" />
     <None Include="Shaders\DirectionalLight.fx" />

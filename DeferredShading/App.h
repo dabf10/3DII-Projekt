@@ -97,6 +97,8 @@ private:
 	void RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
+	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float length );
 
 private:
 	Model *mModel;
@@ -152,6 +154,8 @@ private:
 	ID3DX11EffectTechnique *mPointLightTech;
 	ID3DX11Effect *mSpotlightFX;
 	ID3DX11EffectTechnique *mSpotlightTech;
+	ID3DX11Effect *mCapsuleLightFX;
+	ID3DX11EffectTechnique *mCapsuleLightTech;
 
 	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;

@@ -39,7 +39,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Get normal data from gNormalMap
 	float4 normalData = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
 	// Transform normal back into [-1,1] range
-	float3 normal = 2.0f * normalData.xyz - 1.0f;
+	float3 normal = normalize(2.0f * normalData.xyz - 1.0f);
 
 	// Get specular power
 	float specularPower = normalData.a * 255;

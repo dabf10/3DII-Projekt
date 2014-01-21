@@ -127,6 +127,9 @@
     <None Include="Shaders\FullscreenTexture.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\CapsuleLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">

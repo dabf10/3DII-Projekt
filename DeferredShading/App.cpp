@@ -28,6 +28,8 @@ App::App() :
 	mPointLightTech( 0 ),
 	mSpotlightFX( 0 ),
 	mSpotlightTech( 0 ),
+	mCapsuleLightFX( 0 ),
+	mCapsuleLightTech( 0 ),
 	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
 	mNoDepthWrite( 0 ),
@@ -203,6 +205,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mDirectionalLightFX );
 	SAFE_RELEASE( mPointLightFX );
 	SAFE_RELEASE( mSpotlightFX );
+	SAFE_RELEASE( mCapsuleLightFX );
 
 	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
@@ -776,6 +779,15 @@ bool App::BuildFX(ID3D11Device *device)
 	mSpotlightTech = mSpotlightFX->GetTechniqueByIndex(0);
 
 	//
+	// CapsuleLight
+	//
+
+	if (!CompileShader( device, "Shaders/CapsuleLight.fx", &mCapsuleLightFX ))
+		return false;
+
+	mCapsuleLightTech = mCapsuleLightFX->GetTechniqueByIndex(0);
+
+	//
 	// OldFilm
 	//
 
@@ -970,7 +982,8 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 	XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
 
 	// If we are inside the light volume, draw the sphere's inside face
-	if (XMVectorGetX(cameraToCenterSq) < radius * radius)
+	bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
+	if (inside)
 		pd3dImmediateContext->RSSetState( mCullFront );
 	else
 		pd3dImmediateContext->RSSetState( mCullBack );
@@ -978,6 +991,10 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 	// Render the light volume.
 	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mSphereModel->Render( pd3dImmediateContext );
+
+	// Reset culling mode back to normal, else other meshes might not render correctly.
+	if (inside)
+		pd3dImmediateContext->RSSetState( mCullBack );
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
@@ -1038,6 +1055,27 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 
 	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mConeModel->Render( pd3dImmediateContext );
+
+	// Reset culling mode back to normal, else other meshes might not render correctly.
+	if (inside)
+		pd3dImmediateContext->RSSetState( mCullBack );
+}
+
+void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
+	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float range, float length )
+{
+	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x, direction.y, direction.z, 0.0f));
+
+	mCapsuleLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+	
+	mCapsuleLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
+	mCapsuleLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mCapsuleLightFX->GetVariableByName("gLightLength")->AsScalar()->SetFloat(length);
+	mCapsuleLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+
+	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Draw( 3, 0 );
 }
 
 void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
@@ -1155,6 +1193,28 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
 	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render capsule lights
+	//
+
+	// Set shader variables common for every capsule light
+	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
+	
+	// Render capsule lights
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(0, 0.5f, 0),
+		XMFLOAT3( 0, 0, 1 ), 1.0f, 8.0f );
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(0, 0.5f, 0),
+		XMFLOAT3( -direction.x, direction.y, direction.z ), 2.0f, 8.0f );
+
+	// Unbind the G-Buffer textures
+	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	//
 	// Final stuff
