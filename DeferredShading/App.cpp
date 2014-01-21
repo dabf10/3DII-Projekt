@@ -981,8 +981,8 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
-		float angleDeg, float decayExponent )
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float innerAngleDeg )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -991,21 +991,23 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	// Add a small epsilon to x because if the light is aimed straight up, the
 	// rotation matrix is gonna have a bad time.
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
-	float angleRad = XMConvertToRadians(angleDeg);
-	float xyScale = tanf(angleRad) * radius;
-	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, radius) *
+	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
+	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float xyScale = tanf(outerAngleRad) * range;
+	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
 		XMMatrixTranslation(position.x, position.y, position.z);
 
-	mSpotlightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.View()));
 	mSpotlightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.ViewProj()));
-	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mSpotlightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.View()));
+	mSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+	
 	mSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
+	mSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
+	mSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
 	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
-	mSpotlightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
-	mSpotlightFX->GetVariableByName("gAngleCosine")->AsScalar()->SetFloat(cosf(angleRad));
-	mSpotlightFX->GetVariableByName("gDecayExponent")->AsScalar()->SetFloat(decayExponent);
-	mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
+	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
 
 	// Test to check if the camera is inside light volume.
 	bool inside = false;
@@ -1014,10 +1016,10 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	// to find the point's distance along the axis.
 	XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
 	// Reject values outside 0 <= coneDist <= coneHeight
-	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= radius)
+	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
 	{
 		// Radius at point.
-		float radiusAtPoint = (XMVectorGetX(coneDist) / radius) * xyScale;
+		float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
 		// Calculate the point's orthogonal distance to axis and compare to
 		// cone radius (radius at point).
 		XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
@@ -1130,13 +1132,12 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	// Render spotlights
 	//
 	
-	XMFLOAT3 color(0.0f, 0.4f, 0.0f);
+	XMFLOAT3 color(0.0f, 1.0f, 0.0f);
 	XMFLOAT3 position(0.0f, 10.0f, 0.0f);
 	XMFLOAT3 direction(0.0f, 0.0f, 1.0f);
-	float radius = 15.0f;
-	float intensity = 1.0f;
-	float angleDeg = 10.0f;
-	float decayExponent = 1.0f;
+	float range = 15.0f;
+	float outerAngleDeg = 20.0f; // Angle from center outwards.
+	float innerAngleDeg = 10.0f;
 
 	direction.x = sinf(static_cast<float>( fTime ));
 	direction.z = cosf(static_cast<float>( fTime ));
@@ -1145,11 +1146,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mSpotlightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
-	mSpotlightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
-	RenderSpotlight( pd3dImmediateContext, color, position, direction, radius,
-		intensity, angleDeg, decayExponent );
+	RenderSpotlight( pd3dImmediateContext, color, position, direction, range,
+		outerAngleDeg, innerAngleDeg );
 
 	// Unbind G-Buffer textures
 	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );

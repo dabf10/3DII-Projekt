@@ -1,39 +1,17 @@
-float3 gDirectionVS;
-float gAngleCosine;
-float gDecayExponent;
 float4x4 gWVP;
 float4x4 gWorldView;
+float4x4 gProj;
+
+float3 gDirectionVS;
+float gCosOuter;
+float gCosInner;
 float3 gLightColor;
 float3 gLightPositionVS;
-float gLightRadius; // How far the light reaches
-float gLightIntensity = 1.0f; // Control the brightness of the light
-float gProjA;
-float gProjB;
+float gLightRangeRcp;
 
 Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
 Texture2D gDepthMap;
-
-SamplerState gColorSampler
-{
-	Filter = MIN_MAG_MIP_LINEAR;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gDepthSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gNormalSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
 
 struct VS_IN
 {
@@ -58,16 +36,8 @@ VS_OUT VS( VS_IN input )
 
 float4 PS( VS_OUT input ) : SV_TARGET
 {
-	// Clamp view ray to the plane at Z = 1
-	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
-
-	// Obtain texture coordinates corresponding to the current pixel
-	// The screen coordinates are in [-1,1]x[1,-1]
-	// The texture coordinates need to be in [0,1]x[0,1]
-	float2 texCoord = float2(input.PosH.x / 1280.0f, input.PosH.y / 720.0f);
-
 	// Get normal data from gNormalMap
-	float4 normalData = gNormalMap.Sample( gNormalSampler, texCoord );
+	float4 normalData = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
 	// Transform normal back into [-1,1] range
 	float3 normal = 2.0f * normalData.xyz - 1.0f;
 
@@ -75,47 +45,46 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularPower = normalData.a * 255;
 
 	// Get specular intensity from gColorMap
-	float specularIntensity = gColorMap.Sample( gColorSampler, texCoord ).a;
+	float specularIntensity = gColorMap.Load( uint3( input.PosH.xy, 0 ) ).a;
+	
+	// Clamp view ray to the plane at Z = 1
+	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
 
 	// Read depth
-	float depth = gDepthMap.Sample( gDepthSampler, texCoord ).r;
-	float linearDepth = gProjB / (depth - gProjA);
+	float depth = gDepthMap.Load( uint3( input.PosH.xy, 0 ) ).r;
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
 	float3 posVS = viewRay * linearDepth;
 
-	// Surface-to-light vector
-	float3 lightVector = gLightPositionVS - posVS;
+	// ----------------------------------------------------
 
-	// Compute attenuation based on distance - linear attenuation
-	float attenuation = saturate(1.0f - length(lightVector) / gLightRadius);
+	float3 toLight = gLightPositionVS - posVS;
+	float distToLight = length(toLight);
+	toLight /= distToLight; // Normalize
 
-	// Normalize light vector
-	lightVector = normalize(lightVector);
+	// Linear distance attenuation
+	float distAtt = saturate(1.0f - distToLight * gLightRangeRcp);
+	
+	// Cone attenuation
+	// Angle between lightvector and spot direction (dot) within inner cone: Full
+	// attenuation. Outside outer cone: zero attenuation. Between: decrease from 
+	// 1 to 0.
+	float coneAtt = smoothstep( gCosOuter, gCosInner, dot( gDirectionVS, -toLight ) );
+	
+	// Diffuse light
+	float NdL = saturate( dot( normal, toLight ) );
+	float3 diffuseLight = NdL * gLightColor.rgb;
 
-	// SpotDotLight = cosine of the angle between gDirection and lightVector
-	float SdL = dot(gDirectionVS, -lightVector);
-	if (SdL > gAngleCosine)
-	{
-		float spotIntensity = pow(max(SdL, 0.0f), gDecayExponent);
+	// Reflection vector
+	float3 reflectionVector = normalize(reflect(-toLight, normal));
 
-		// Compute diffuse light
-		float NdL = max(0, dot(normal, lightVector));
-		float3 diffuseLight = NdL * gLightColor.rgb;
+	// Camera-to-surface vector (in VS camera position is origin)
+	float3 directionToCamera = normalize(-posVS);
 
-		// Reflection vector
-		float3 reflectionVector = normalize(reflect(-lightVector, normal));
-
-		// Camera-to-surface vector (in VS camera position is origin)
-		float3 directionToCamera = normalize(-posVS);
-
-		// Compute specular light
-		float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
-			directionToCamera)), specularPower);
-
-		// Take attenuation and light intensity into account. Don't forget spotIntensity!
-		return attenuation * gLightIntensity * spotIntensity * float4(diffuseLight.rgb, specularLight);
-	}
-
-	return float4(0, 0, 0, 0);
+	// Specular light
+	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
+		directionToCamera)), specularPower);
+	
+	return distAtt * coneAtt * float4(diffuseLight.rgb, specularLight);
 }
 
 technique11 Technique0
