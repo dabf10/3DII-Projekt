@@ -30,6 +30,9 @@ App::App() :
 	mSpotlightTech( 0 ),
 	mCapsuleLightFX( 0 ),
 	mCapsuleLightTech( 0 ),
+	mProjPointLightFX( 0 ),
+	mProjPointLightTech( 0 ),
+	mProjPointLightColor( 0 ),
 	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
 	mNoDepthWrite( 0 ),
@@ -95,6 +98,9 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	mConeModel = new Model();
 	if (!mConeModel->LoadOBJ( "cone.obj", true, pd3dDevice, mConeMaterialToUseForGroup, mConeMaterials ) )
+		return E_FAIL;
+
+	if (FAILED(D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "ColorCube.dds", 0, 0, &mProjPointLightColor, 0 ) ) )
 		return E_FAIL;
 
 	if (!BuildFX(pd3dDevice)) return E_FAIL;
@@ -192,6 +198,8 @@ void App::OnD3D11DestroyDevice( )
 	mSphereSRV.clear();
 	mSphereMaterials.clear();
 	mSphereMaterialToUseForGroup.clear();
+
+	SAFE_RELEASE( mProjPointLightColor );
 	
 	SAFE_RELEASE( mInputLayout );
 
@@ -206,6 +214,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mPointLightFX );
 	SAFE_RELEASE( mSpotlightFX );
 	SAFE_RELEASE( mCapsuleLightFX );
+	SAFE_RELEASE( mProjPointLightFX );
 
 	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
@@ -788,6 +797,15 @@ bool App::BuildFX(ID3D11Device *device)
 	mCapsuleLightTech = mCapsuleLightFX->GetTechniqueByIndex(0);
 
 	//
+	// ProjPointLight
+	//
+
+	if (!CompileShader( device, "Shaders/ProjPointLight.fx", &mProjPointLightFX ))
+		return false;
+
+	mProjPointLightTech = mProjPointLightFX->GetTechniqueByIndex(0);
+
+	//
 	// OldFilm
 	//
 
@@ -1078,6 +1096,47 @@ void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
 	pd3dImmediateContext->Draw( 3, 0 );
 }
 
+void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
+		XMFLOAT3 position, float radius, float intensity, float fTime )
+{
+	// Compute the light world matrix. Scale according to light radius,
+	// and translate it to light position.
+	XMMATRIX sphereWorld = XMMatrixScaling(radius, radius, radius) *
+		XMMatrixRotationZ(fTime) * XMMatrixRotationY(fTime) *
+		XMMatrixTranslation(position.x, position.y, position.z);
+	XMMATRIX worldView = XMMatrixMultiply( sphereWorld, mCamera.View() );
+	
+	mProjPointLightFX->GetVariableByName("gLightTransform")->AsMatrix()->SetMatrix((float*)&XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+	mProjPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
+	mProjPointLightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&worldView);
+	mProjPointLightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(sphereWorld, mCamera.ViewProj()));
+	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
+	mProjPointLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mProjPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
+	mProjPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
+		
+	// Calculate the distance between the camera and light center.
+	XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
+
+	// If we are inside the light volume, draw the sphere's inside face
+	bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
+	if (inside)
+		pd3dImmediateContext->RSSetState( mCullFront );
+	else
+		pd3dImmediateContext->RSSetState( mCullBack );
+
+	// Render the light volume.
+	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mSphereModel->Render( pd3dImmediateContext );
+
+	// Reset culling mode back to normal, else other meshes might not render correctly.
+	if (inside)
+		pd3dImmediateContext->RSSetState( mCullBack );
+
+	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
+}
+
 void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
 	// Bind the light accumulation buffer as a render target. Using additive blending,
@@ -1139,8 +1198,6 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
 	colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
 	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
-
-	float angle = static_cast<float>( fTime );
 
 	float lightRadiusFirstSet = 12.0f;
 	float lightRadiusSecondSet = 20.0f;
@@ -1215,6 +1272,25 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
 	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
 	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render projective point lights
+	//
+
+	// Set shader variables common for every projective point light
+	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mProjPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
+	mProjPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
+
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 0, 10.0f, 0 ), 20.0f, 1.0f, fTime );
+
+	// Unbind the G-Buffer textures
+	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	//
 	// Final stuff

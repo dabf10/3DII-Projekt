@@ -99,6 +99,8 @@ private:
 		float innerAngleDeg );
 	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float length );
+	void RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
+		XMFLOAT3 position, float radius, float intensity, float fTime ); // Remove time, it's just to test light animation
 
 private:
 	Model *mModel;
@@ -117,6 +119,8 @@ private:
 	XMFLOAT4X4 mConeWorld;
 	std::vector<UINT> mConeMaterialToUseForGroup;
 	std::vector<OBJLoader::SurfaceMaterial> mConeMaterials;
+
+	ID3D11ShaderResourceView *mProjPointLightColor;
 
 	ID3D11Buffer *mFloorVB;
 	ID3D11ShaderResourceView *mFloorTex;
@@ -156,6 +160,8 @@ private:
 	ID3DX11EffectTechnique *mSpotlightTech;
 	ID3DX11Effect *mCapsuleLightFX;
 	ID3DX11EffectTechnique *mCapsuleLightTech;
+	ID3DX11Effect *mProjPointLightFX;
+	ID3DX11EffectTechnique *mProjPointLightTech;
 
 	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
