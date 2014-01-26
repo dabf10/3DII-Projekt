@@ -422,6 +422,7 @@
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />
     <None Include="Shaders\ProjPointLight.fx" />
+    <None Include="Shaders\ProjSpotlight.fx" />
     <None Include="Shaders\Spotlight.fx" />
     <None Include="Shaders\SSAO.fx" />
   </ItemGroup>

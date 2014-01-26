@@ -33,6 +33,9 @@ App::App() :
 	mProjPointLightFX( 0 ),
 	mProjPointLightTech( 0 ),
 	mProjPointLightColor( 0 ),
+	mProjSpotlightFX( 0 ),
+	mProjSpotlightTech( 0 ),
+	mProjSpotlightColor( 0 ),
 	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
 	mNoDepthWrite( 0 ),
@@ -101,6 +104,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 		return E_FAIL;
 
 	if (FAILED(D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "ColorCube.dds", 0, 0, &mProjPointLightColor, 0 ) ) )
+		return E_FAIL;
+	if (FAILED(D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "ProjSpotColor.png", 0, 0, &mProjSpotlightColor, 0 ) ) )
 		return E_FAIL;
 
 	if (!BuildFX(pd3dDevice)) return E_FAIL;
@@ -200,6 +205,7 @@ void App::OnD3D11DestroyDevice( )
 	mSphereMaterialToUseForGroup.clear();
 
 	SAFE_RELEASE( mProjPointLightColor );
+	SAFE_RELEASE( mProjSpotlightColor );
 	
 	SAFE_RELEASE( mInputLayout );
 
@@ -215,6 +221,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mSpotlightFX );
 	SAFE_RELEASE( mCapsuleLightFX );
 	SAFE_RELEASE( mProjPointLightFX );
+	SAFE_RELEASE( mProjSpotlightFX );
 
 	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
@@ -806,6 +813,15 @@ bool App::BuildFX(ID3D11Device *device)
 	mProjPointLightTech = mProjPointLightFX->GetTechniqueByIndex(0);
 
 	//
+	// ProjSpotlight
+	//
+
+	if (!CompileShader( device, "Shaders/ProjSpotlight.fx", &mProjSpotlightFX ))
+		return false;
+
+	mProjSpotlightTech = mProjSpotlightFX->GetTechniqueByIndex(0);
+
+	//
 	// OldFilm
 	//
 
@@ -1107,7 +1123,6 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 	XMMATRIX worldView = XMMatrixMultiply( sphereWorld, mCamera.View() );
 	
 	mProjPointLightFX->GetVariableByName("gLightTransform")->AsMatrix()->SetMatrix((float*)&XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
-	mProjPointLightFX->GetVariableByName("gWorld")->AsMatrix()->SetMatrix((float*)&sphereWorld);
 	mProjPointLightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&worldView);
 	mProjPointLightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(sphereWorld, mCamera.ViewProj()));
 	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
@@ -1135,6 +1150,83 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 		pd3dImmediateContext->RSSetState( mCullBack );
 
 	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
+	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+}
+
+void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float innerAngleDeg )
+{
+	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
+	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
+
+	// Construct the cone world matrix.
+	// Add a small epsilon to x because if the light is aimed straight up, the
+	// rotation matrix is gonna have a bad time.
+	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
+	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
+	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float xyScale = tanf(outerAngleRad) * range;
+	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
+		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
+		XMMatrixTranslation(position.x, position.y, position.z);
+	XMMATRIX worldView = XMMatrixMultiply(coneWorld, mCamera.View());
+	// 2 * halfAngle = fov / 2 ==> fov = 4 * halfAngle
+	XMMATRIX lightViewProj = XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView) * XMMatrixPerspectiveFovLH(outerAngleRad * 4, 1.0f, 0.0001f * range, range);
+	//XMMatrixSet(tanf(XM_PIDIV2 - 2*outerAngleRad), 0, 0, 0,
+	//			0, tanf(XM_PIDIV2 - 2*outerAngleRad), 0, 0,
+	//			0, 0, range / (range - 0.0001f * range), 1,
+	//			0, 0, -0.0001f * range * range / (range - 0.0001f * range), 0);
+	
+	mProjSpotlightFX->GetVariableByName("gLightViewProj")->AsMatrix()->SetMatrix((float*)&lightViewProj);
+	mProjSpotlightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.ViewProj()));
+	mProjSpotlightFX->GetVariableByName("gWorldView")->AsMatrix()->SetMatrix((float*)&worldView);
+	mProjSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+	
+	mProjSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
+	mProjSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
+	mProjSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
+	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
+	mProjSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
+	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(1.0f);
+
+	// Test to check if the camera is inside light volume.
+	bool inside = false;
+	XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	// Project the vector from cone tip to test point onto light direction
+	// to find the point's distance along the axis.
+	XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
+	// Reject values outside 0 <= coneDist <= coneHeight
+	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
+	{
+		// Radius at point.
+		float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
+		// Calculate the point's orthogonal distance to axis and compare to
+		// cone radius (radius at point).
+		XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
+		XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
+
+		inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
+	}
+
+	// If we are inside the light volume, draw the cone's inside face.
+	if (inside)
+	{
+		pd3dImmediateContext->RSSetState( mCullFront );
+	}
+	else
+		pd3dImmediateContext->RSSetState( mCullBack );
+
+	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mConeModel->Render( pd3dImmediateContext );
+
+	// Reset culling mode back to normal, else other meshes might not render correctly.
+	if (inside)
+		pd3dImmediateContext->RSSetState( mCullBack );
+	
+	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
+	mProjSpotlightTech->GetPassByIndex( 0 )->Apply(0, pd3dImmediateContext);
 }
 
 void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
@@ -1291,6 +1383,28 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
 	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
 	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render projective spotlights
+	//
+
+	position = XMFLOAT3(0,5,0);
+	direction.y = -1.0f;
+	
+	// Set shader variables common for every projective spotlight
+	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mProjSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+
+	// Reuse position and stuff from previous spotlight
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
+		outerAngleDeg, innerAngleDeg );
+
+	// Unbind G-Buffer textures
+	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	//
 	// Final stuff

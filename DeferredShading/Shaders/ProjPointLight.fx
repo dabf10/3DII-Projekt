@@ -1,7 +1,6 @@
 float4x4 gLightTransform; // Inverse world
 float4x4 gWVP;
 float4x4 gWorldView;
-float4x4 gWorld;
 float3 gLightPositionVS;
 float gLightRadius;
 float gLightIntensity = 1.0f;
@@ -40,8 +39,7 @@ struct VS_IN
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
-	float3 PosVS : POSITION0;
-	float3 PosW : POSITION1;
+	float3 PosVS : POSITION;
 };
 
 VS_OUT VS( VS_IN input )
@@ -50,7 +48,6 @@ VS_OUT VS( VS_IN input )
 
 	output.PosH = mul( float4(input.PosL, 1.0f), gWVP );
 	output.PosVS = mul( float4(input.PosL, 1.0f), gWorldView ).xyz;
-	output.PosW = mul( float4(input.PosL, 1.0f), gWorld ).xyz;
 
 	return output;
 }
@@ -87,12 +84,16 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Normalize light vector
 	lightVector = normalize(lightVector);
 
-	// TODO: Troligtvis fel i beräkning av sampledirection
-	//float3 sampleDirection = gLightTransform[3].xyz + input.PosW;
-	//sampleDirection = mul( sampleDirection.xyz, (float3x3)gLightTransform );
+	// The idea is to get a sample direction that is in light space (think model
+	// space) in order to adress light orientation properly. Because we are in
+	// view space, we transform the light-to-surface vector to light space and
+	// use that as sample direction for the color. This allows the light to
+	// rotate, while the projection on geometry follows its orientation.
 	float3 sampleDirection = gLightPositionVS - posVS;
 	sampleDirection = mul( sampleDirection.xyz, (float3x3)gLightTransform );
 
+	// Basically, the only difference from a regular point light is that the
+	// light color is sampled from a texture instead of using a constant value.
 	float3 lightColor = gLightIntensity * gProjLightTex.Sample( gSamLinearCube, sampleDirection ).rgb;
 
 	// Compute diffuse light
