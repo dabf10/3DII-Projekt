@@ -371,7 +371,7 @@ bool gnomeImporter::getVectors(string path, vector<material> &materialList, vect
 	if(binaryFile.is_open())
 	{
 		binaryFile.seekg (0,binaryFile.end);
-		size_t length =binaryFile.tellg();
+		size_t length = binaryFile.tellg();
 		binaryFile.seekg (0, binaryFile.beg);
 		DeserializeFromFile(binaryPath, length);
 	}

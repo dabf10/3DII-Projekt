@@ -4,6 +4,8 @@
 #include "Camera.h" //Just wanted XNAmath but includes hate me.
 #include <vector>
 #include <map>
+#include <string>
+#include <fstream>
 
 class SkinnedData
 {
@@ -17,13 +19,22 @@ public:
 	~SkinnedData(void);
 
 	void Animate(std::string& clipName, float time, std::vector<XMFLOAT4X4>& transformations);
-	void LoadAnimation(std::string* fileName);
+	void LoadAnimation(std::string fileName);
+	void ParseAnimation(std::string fileName);
+	void WriteSerializedAnimation(std::string fileName);
+	void ReadBinaryAnimation(std::string fileName, size_t length);
 
 private:
 	std::vector<int> m_BoneHierarchy;
 	std::vector<XMFLOAT4X4> m_BoneOffsets;
 
 	std::map<std::string, AnimationClip> m_AnimationClips;
+
+private:
+	//Constants for serialization
+	static const size_t bufferSize	= 8388608;
+	static const size_t uintSize	= sizeof(unsigned int);
+	static const size_t floatSize	= sizeof(float);
 };
 
 struct SkinnedData::AnimationClip
@@ -32,6 +43,7 @@ struct SkinnedData::AnimationClip
 	~AnimationClip(void);
 
 	void Interpolate(float time, std::vector <XMFLOAT4X4>& boneTransformations);
+	void Serialize(char* pos, size_t& readCount);
 
 	//std::vector<std::vector<XMFLOAT4X4>> Cache;
 	std::vector<BoneAnimation> BoneAnimations;
@@ -44,6 +56,7 @@ struct SkinnedData::BoneAnimation
 	~BoneAnimation(void);
 
 	void Interpolate(float time, XMFLOAT4X4& matrix) const;
+	void Serialize(char* pos, size_t& readCount);
 
 	std::vector<Keyframe> KeyFrames;
 };
