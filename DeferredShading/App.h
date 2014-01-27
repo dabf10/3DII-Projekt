@@ -147,6 +147,7 @@ private:
 	ID3D11ShaderResourceView *mLightSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
+	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
 	ID3D11ShaderResourceView *mMainDepthSRV;
 	// Final image
 	ID3D11RenderTargetView *mCompositeRT;
@@ -172,7 +173,8 @@ private:
 	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
 
-	ID3D11DepthStencilState *mNoDepthWrite;
+	ID3D11DepthStencilState *mNoDepthTest;
+	ID3D11DepthStencilState *mDepthGreaterEqual;
 	ID3D11BlendState *mAdditiveBlend;
 	ID3D11RasterizerState *mCullBack;
 	ID3D11RasterizerState *mCullFront;

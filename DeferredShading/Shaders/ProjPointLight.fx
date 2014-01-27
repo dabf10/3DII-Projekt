@@ -109,7 +109,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Compute specular light
 	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
 		directionToCamera)), specularPower);
-
+	
 	// Take attenuation and light intensity into account
 	return attenuation * gLightIntensity * float4(diffuseLight.rgb, specularLight);
 }

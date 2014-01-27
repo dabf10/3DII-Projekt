@@ -17,6 +17,7 @@ App::App() :
 	mLightRT( 0 ),
 	mLightSRV( 0 ),
 	mMainDepthDSV( 0 ),
+	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
 	mCompositeRT( 0 ),
 	mCompositeSRV( 0 ),
@@ -38,7 +39,8 @@ App::App() :
 	mProjSpotlightColor( 0 ),
 	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
-	mNoDepthWrite( 0 ),
+	mNoDepthTest( 0 ),
+	mDepthGreaterEqual( 0 ),
 	mAdditiveBlend( 0 ),
 	mCullBack( 0 ),
 	mCullFront( 0 ),
@@ -140,12 +142,14 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	// Load floor texture
 	V_RETURN( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "floor.jpg", 0, 0, &mFloorTex, 0 ) );
 
-	// Create a no depth write D/S state
+	// No depth test
 	D3D11_DEPTH_STENCIL_DESC dsDesc = D3D11_DEPTH_STENCIL_DESC( );
-	dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+	dsDesc.DepthEnable = false;
+	V_RETURN( pd3dDevice->CreateDepthStencilState( &dsDesc, &mNoDepthTest ) );
+	// Depth test GEQUAL
 	dsDesc.DepthEnable = true;
-	dsDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-	V_RETURN( pd3dDevice->CreateDepthStencilState( &dsDesc, &mNoDepthWrite ) );
+	dsDesc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+	V_RETURN( pd3dDevice->CreateDepthStencilState( &dsDesc, &mDepthGreaterEqual ) );
 
 	// Additive blend state
 	D3D11_BLEND_DESC blendDesc;
@@ -226,7 +230,8 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
 
-	SAFE_RELEASE( mNoDepthWrite );
+	SAFE_RELEASE( mNoDepthTest );
+	SAFE_RELEASE( mDepthGreaterEqual );
 	SAFE_RELEASE( mAdditiveBlend );
 	SAFE_RELEASE( mCullBack );
 	SAFE_RELEASE( mCullFront );
@@ -282,6 +287,7 @@ void App::OnD3D11ReleasingSwapChain( )
 	SAFE_RELEASE( mLightRT );
 	SAFE_RELEASE( mLightSRV );
 	SAFE_RELEASE( mMainDepthDSV );
+	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
 	SAFE_RELEASE( mCompositeRT );
 	SAFE_RELEASE( mCompositeSRV );
@@ -970,6 +976,9 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	dsvDesc.Texture2D.MipSlice = 0;
 	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
 
+	dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSVReadOnly ) );
+
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
 	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
 	srvDesc.Texture2D.MipLevels = 1;
@@ -993,9 +1002,6 @@ void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMF
 	pd3dImmediateContext->Draw( 3, 0 );
 }
 
-// TODO: Would be nice to use depth buffer to depth-test light volumes. But
-// that means the depth buffer would need to be bound both as dsv and srv at
-// the same time. Direct3D11 should support this I believe.
 void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, float radius, float intensity )
 {
@@ -1011,24 +1017,24 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 	mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 		
-	// Calculate the distance between the camera and light center.
-	XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
+	//// Calculate the distance between the camera and light center.
+	//XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	//XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
 
-	// If we are inside the light volume, draw the sphere's inside face
-	bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullFront );
-	else
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// If we are inside the light volume, draw the sphere's inside face
+	//bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullFront );
+	//else
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	// Render the light volume.
 	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mSphereModel->Render( pd3dImmediateContext );
 
-	// Reset culling mode back to normal, else other meshes might not render correctly.
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// Reset culling mode back to normal, else other meshes might not render correctly.
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
@@ -1060,39 +1066,39 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
 
-	// Test to check if the camera is inside light volume.
-	bool inside = false;
-	XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	// Project the vector from cone tip to test point onto light direction
-	// to find the point's distance along the axis.
-	XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
-	// Reject values outside 0 <= coneDist <= coneHeight
-	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
-	{
-		// Radius at point.
-		float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
-		// Calculate the point's orthogonal distance to axis and compare to
-		// cone radius (radius at point).
-		XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
-		XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
+	//// Test to check if the camera is inside light volume.
+	//bool inside = false;
+	//XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	//// Project the vector from cone tip to test point onto light direction
+	//// to find the point's distance along the axis.
+	//XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
+	//// Reject values outside 0 <= coneDist <= coneHeight
+	//if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
+	//{
+	//	// Radius at point.
+	//	float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
+	//	// Calculate the point's orthogonal distance to axis and compare to
+	//	// cone radius (radius at point).
+	//	XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
+	//	XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
 
-		inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
-	}
-
-	// If we are inside the light volume, draw the cone's inside face.
-	if (inside)
-	{
-		pd3dImmediateContext->RSSetState( mCullFront );
-	}
-	else
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//	inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
+	//}
+	
+	//// If we are inside the light volume, draw the cone's inside face.
+	//if (inside)
+	//{
+	//	pd3dImmediateContext->RSSetState( mCullFront );
+	//}
+	//else
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mConeModel->Render( pd3dImmediateContext );
 
-	// Reset culling mode back to normal, else other meshes might not render correctly.
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// Reset culling mode back to normal, else other meshes might not render correctly.
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 }
 
 void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
@@ -1130,24 +1136,24 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 	mProjPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mProjPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 		
-	// Calculate the distance between the camera and light center.
-	XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
+	//// Calculate the distance between the camera and light center.
+	//XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	//XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
 
-	// If we are inside the light volume, draw the sphere's inside face
-	bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullFront );
-	else
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// If we are inside the light volume, draw the sphere's inside face
+	//bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullFront );
+	//else
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	// Render the light volume.
 	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mSphereModel->Render( pd3dImmediateContext );
 
-	// Reset culling mode back to normal, else other meshes might not render correctly.
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// Reset culling mode back to normal, else other meshes might not render correctly.
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
 	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
@@ -1191,39 +1197,39 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
 	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(1.0f);
 
-	// Test to check if the camera is inside light volume.
-	bool inside = false;
-	XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	// Project the vector from cone tip to test point onto light direction
-	// to find the point's distance along the axis.
-	XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
-	// Reject values outside 0 <= coneDist <= coneHeight
-	if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
-	{
-		// Radius at point.
-		float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
-		// Calculate the point's orthogonal distance to axis and compare to
-		// cone radius (radius at point).
-		XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
-		XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
+	//// Test to check if the camera is inside light volume.
+	//bool inside = false;
+	//XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
+	//// Project the vector from cone tip to test point onto light direction
+	//// to find the point's distance along the axis.
+	//XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
+	//// Reject values outside 0 <= coneDist <= coneHeight
+	//if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
+	//{
+	//	// Radius at point.
+	//	float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
+	//	// Calculate the point's orthogonal distance to axis and compare to
+	//	// cone radius (radius at point).
+	//	XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
+	//	XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
 
-		inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
-	}
-
-	// If we are inside the light volume, draw the cone's inside face.
-	if (inside)
-	{
-		pd3dImmediateContext->RSSetState( mCullFront );
-	}
-	else
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//	inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
+	//}
+	//
+	//// If we are inside the light volume, draw the cone's inside face.
+	//if (inside)
+	//{
+	//	pd3dImmediateContext->RSSetState( mCullFront );
+	//}
+	//else
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mConeModel->Render( pd3dImmediateContext );
 
-	// Reset culling mode back to normal, else other meshes might not render correctly.
-	if (inside)
-		pd3dImmediateContext->RSSetState( mCullBack );
+	//// Reset culling mode back to normal, else other meshes might not render correctly.
+	//if (inside)
+	//	pd3dImmediateContext->RSSetState( mCullBack );
 	
 	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
 	mProjSpotlightTech->GetPassByIndex( 0 )->Apply(0, pd3dImmediateContext);
@@ -1233,7 +1239,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
 	// Bind the light accumulation buffer as a render target. Using additive blending,
 	// the contribution of every light will be summed and stored in this buffer.
-	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, 0);
+	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, mMainDepthDSVReadOnly);
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
 	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
@@ -1250,6 +1256,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 	// Directional light stuff
 	//
+
+	pd3dImmediateContext->OMSetDepthStencilState(mNoDepthTest, 0);
+	pd3dImmediateContext->RSSetState(mCullBack);
 
 	// Set shader variables common for every directional light
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
@@ -1271,6 +1280,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 	// Render point lights
 	//
+
+	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
+	pd3dImmediateContext->RSSetState(mCullFront);
 
 	// Set shader variables common for every point light
 	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
@@ -1318,6 +1330,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 	// Render spotlights
 	//
+
+	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
+	pd3dImmediateContext->RSSetState(mCullFront);
 	
 	XMFLOAT3 color(0.0f, 1.0f, 0.0f);
 	XMFLOAT3 position(0.0f, 10.0f, 0.0f);
@@ -1347,6 +1362,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	// Render capsule lights
 	//
 
+	pd3dImmediateContext->OMSetDepthStencilState(mNoDepthTest, 0);
+	pd3dImmediateContext->RSSetState(mCullBack);
+
 	// Set shader variables common for every capsule light
 	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
@@ -1369,6 +1387,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	// Render projective point lights
 	//
 
+	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
+	pd3dImmediateContext->RSSetState(mCullFront);
+
 	// Set shader variables common for every projective point light
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
@@ -1387,6 +1408,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 	// Render projective spotlights
 	//
+
+	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
+	pd3dImmediateContext->RSSetState(mCullFront);
 
 	position = XMFLOAT3(0,5,0);
 	direction.y = -1.0f;
@@ -1413,4 +1437,5 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	// Reset blend and rasterizer states to default
 	pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
 	pd3dImmediateContext->RSSetState( 0 );
+	pd3dImmediateContext->OMSetDepthStencilState(0, 0);
 }
