@@ -2,7 +2,11 @@
 
 #pragma region SkinnedData
 SkinnedData::SkinnedData(void)
-{}
+{
+	m_BoneHierarchy = std::vector<int>();
+	m_BoneOffsets = std::vector<XMFLOAT4X4>();
+	m_AnimationClips = std::map<std::string, AnimationClip>();
+}
 
 SkinnedData::~SkinnedData(void)
 {}
@@ -193,6 +197,11 @@ void SkinnedData::WriteSerializedAnimation(std::string fileName)
 		it->second.Serialize(pos, readCount);
 	}
 
+	//flush
+	std::ofstream ofs = std::ofstream(fileName, std::ofstream::binary);
+	ofs.write(binary, readCount); //Ingen nullterminator
+	ofs.close();
+
 	//Cleanup
 	if(binary)
 		delete[] binary;
@@ -200,8 +209,6 @@ void SkinnedData::WriteSerializedAnimation(std::string fileName)
 
 void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 {
-	fileName = fileName + "BINARYANIMATION";
-
 	//Read the file
 	HANDLE fileHandle = CreateFileA(fileName.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
 	char* buffer = new char[fileLength];
@@ -215,7 +222,7 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 	unsigned int mapSize = 0;
 	memcpy_s(&mapSize, uintSize, pos, uintSize);
 	pos += uintSize;
-	bytesread += uintSize;
+	bytesread = uintSize;	// = on purpose to reset.
 
 	std::string* clipNames = new std::string[mapSize];
 	AnimationClip* clips = new AnimationClip[mapSize];
@@ -231,7 +238,7 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 		char* readString = new char[stringLength];
 		memcpy_s(readString, stringLength, pos, stringLength);
 		pos += stringLength;
-		bytesread = stringLength;
+		bytesread += stringLength;
 		clipNames[i] = readString;
 
 		//Read animationclip
@@ -241,7 +248,7 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 		float clipLength = 0.0f;
 		memcpy_s(&clipLength, floatSize, pos, floatSize);
 		pos += floatSize;
-		bytesread = floatSize;
+		bytesread += floatSize;
 		clip.ClipLength = clipLength;
 
 		//Read BoneAnimationCount
@@ -269,9 +276,12 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 				pos += sizeof(Keyframe);
 				bytesread += sizeof(Keyframe);
 			}
-			tempBoneAnimations[j].KeyFrames.insert(tempBoneAnimations->KeyFrames.end(), &tempKeyFrames[0], &tempKeyFrames[keyFrameCount]);
+			//Put the keyframes in the bone animations
+			tempBoneAnimations[j].KeyFrames.insert(tempBoneAnimations[j].KeyFrames.end(), &tempKeyFrames[0], &tempKeyFrames[keyFrameCount]); //Tar ej med sista elementet så [keyFrameCount} är OK!
 		}
-		memcpy_s(&clips[0], bytesread - countStamp, pos, bytesread - countStamp); //Ej säker på att ajg läser rätt längd här
+		//Put the bone animations in the animationclip
+		clip.BoneAnimations.insert(clip.BoneAnimations.end(), &tempBoneAnimations[0], &tempBoneAnimations[boneAnimationCount]);
+		clips[i] = clip;
 	}
 
 	//Put the read Animationsclips and their respective names in the map
@@ -285,7 +295,6 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 	//	delete[] clipNames;
 	//if(clips)
 	//	delete[] clips;
-
 }
 
 #pragma endregion
@@ -310,7 +319,7 @@ void SkinnedData::AnimationClip::Interpolate(float time, std::vector<XMFLOAT4X4>
 	}
 }
 
-void SkinnedData::AnimationClip::Serialize(char* pos, size_t& readCount)
+void SkinnedData::AnimationClip::Serialize(char* &pos, size_t& readCount)
 {
 	//Save ClipLength
 	memcpy_s(pos, bufferSize - readCount, &ClipLength, floatSize);
@@ -390,7 +399,7 @@ void SkinnedData::BoneAnimation::Interpolate(float time, XMFLOAT4X4& matrix) con
 	XMStoreFloat4x4(&matrix, XMMatrixAffineTransformation( scale, zero, quaternion, position));
 }
 
-void SkinnedData::BoneAnimation::Serialize(char* pos, size_t& readCount)
+void SkinnedData::BoneAnimation::Serialize(char* &pos, size_t& readCount)
 {
 	unsigned int elementCount = KeyFrames.size();
 	memcpy_s(pos, bufferSize - readCount, &elementCount, uintSize);

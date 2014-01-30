@@ -69,6 +69,9 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	if ( !mModel->LoadOBJ( "bth.obj", false, pd3dDevice, mBthMaterialToUseForGroup, mBthMaterials ) )
 		return E_FAIL;
 
+	mAnimatedModel = new SkinnedData();
+	mAnimatedModel->LoadAnimation("Flamingo_Final_1.GNOME");
+
 	// Loop through every material (group) and load it's diffuse texture.
 	for (UINT i = 0; i < mBthMaterials.size(); ++i)
 	{

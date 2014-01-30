@@ -156,7 +156,7 @@
     <ClCompile Include="GnomeImporter.cpp">
       <Filter>Application\GnomeLoader</Filter>
     </ClCompile>
-    <ClCompile Include="SkinnedDatacpp.cpp">
+    <ClCompile Include="SkinnedData.cpp">
       <Filter>Application\Model</Filter>
     </ClCompile>
   </ItemGroup>

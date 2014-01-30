@@ -12,6 +12,7 @@
 #include <Windows.h>
 #include <xnamath.h>
 #include "d3dx11effect.h"
+#include "SkinnedData.h"
 #include "GnomeImporter.h"
 
 
@@ -102,6 +103,7 @@ private:
 
 private:
 	Model *mModel;
+	SkinnedData *mAnimatedModel;
 	XMFLOAT4X4 mBthWorld[2];
 	std::vector<UINT> mBthMaterialToUseForGroup;
 	std::vector<OBJLoader::SurfaceMaterial> mBthMaterials;
