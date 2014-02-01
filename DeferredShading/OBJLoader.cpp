@@ -4,152 +4,178 @@
 
 using namespace std;
 
-OBJLoader::OBJLoader() : mHasTexCoord(false),
-	mHasNorm(false), mVIndex(0), mTotalVertices(0), mMeshTriangles(0)
+OBJLoader::OBJLoader() : mCurrentMaterial( -1 ), mTotalVertices( 0 )
 {
 }
 
-bool OBJLoader::LoadOBJ(
-	std::string filename,
-	std::vector<UINT>& groupIndexStart,
-	std::vector<UINT>& materialToUseForGroup,
-	UINT& groupCount,
-	bool isRHCoordSys,
-	std::vector<SurfaceMaterial>& materials,
-	void **vertexData,
-	void **indexData,
-	long &vertexDataSize,
-	UINT &nIndices,
-	UINT &indexSize)
+OBJLoader::~OBJLoader()
+{
+	for (int i = 0; i < mMaterials.size(); ++i)
+	{
+		delete mMaterials[i].name;
+	}
+}
+
+// Missing feature: Materials. If wanted, one could read mtllib to store all
+// material files used. After the .obj file is parsed, all material files can
+// be parsed, storing material info such as texture in the materials created
+// earlier (create a new one if non-existant).
+// TODO:
+// Abusement test: Right handed and left handed. RH/LH with negative faces.
+// RH/LH with > 3 polygon vertices. RH/LH with > 3 polygon vertices and negative faces.
+// 
+bool OBJLoader::LoadOBJ( const char *filename, bool rightHanded )
 {
 	// Open file for read.
-	ifstream fin(filename.c_str());
+	ifstream fin( filename );
 
 	if (!fin)
 		return false;
 
+	char curChar;
 	while(fin)
 	{
-		mCheckChar = fin.get(); // Get next char.
+		curChar = fin.get(); // Get next char.
 
-		switch (mCheckChar)
+		switch (curChar)
 		{
-		case '#':			ReadComment(fin);							break;
-		case 's':			ReadComment(fin);							break;
-		case 'v':			ReadVertexDescriptions(fin, isRHCoordSys);	break;
-		case 'g':			ReadGroup(fin, groupIndexStart, groupCount);break;
-		case 'f':			ReadFace(fin, isRHCoordSys, groupIndexStart, groupCount); break;
-		case 'm':			ReadMtlLib(fin);							break;
-		case 'u':			ReadUseMtl(fin);							break;
-		default:			break;
+		case 'v':			ReadVertexDescriptions(fin, rightHanded); break;
+		case 'f':			ReadFace(fin); break;
+		case 'u':			ReadUsemtl(fin); break;
+		default:			if (curChar != '\n') ReadComment(fin); break;
 		}
 	}
 
-	// There won't be another index start after our last group, so set it here.
-	groupIndexStart.push_back(mVIndex);
-
-	// Sometimes "g" is defined at the very top of the file, then again before
-	// the first group of faces. This makes sure the first group does not contain
-	// "0" indices.
-	if (groupIndexStart[1] == 0)
-	{
-		groupIndexStart.erase(groupIndexStart.begin()+1);
-		groupCount--;
-	}
-
-	// Make sure we have a default for the tex coord and normal if one or both
-	// are not specified.
-	if (!mHasNorm)
-		mVertexNormals.push_back(XMFLOAT3(0.0f, 0.0f, 0.0f));
-	if (!mHasTexCoord)
-		mVertexTextureCoordinates.push_back(XMFLOAT2(0.0f, 0.0f));
-
-	// Close the obj file, and open the mtl file(s).
 	fin.close();
 
-	// Loop through every material library.
-	for (UINT i = 0; i < mMeshMatLibs.size(); ++i)
-	{
-		fin.open(mMeshMatLibs[i].c_str());
-
-		if (!fin)
-			continue;
-
-		// Read and store all lines so we can handle them individually.
-		std::string currentLine = "";
-		std::vector<std::string> lines;
-		while (!fin.eof())
-		{
-			getline(fin, currentLine);
-			lines.push_back(currentLine);
-		}
-
-		fin.close();
-
-		// For each line, make an istringstream out of it and get the first token
-		// of the string. Depending on this token, do what needs to be done.
-		std::istringstream currentLineSS;
-		std::string token;
-		for (UINT i = 0; i < lines.size(); ++i)
-		{
-			currentLineSS = istringstream(lines[i]);
-			token = "";
-			currentLineSS >> token;
-			currentLineSS.get(); // Remove space so methods can do their thing.
-
-				 if (token == "newmtl")	ReadNewMtl(currentLineSS, materials);
-			else if (token == "illum")	ReadIllum(currentLineSS, materials);
-			else if (token == "Kd")		ReadDiffuseColor(currentLineSS, materials);
-			else if (token == "Ka")		ReadAmbientColor(currentLineSS, materials);
-			else if (token == "Tf")		ReadTransmissionFilter(currentLineSS, materials);
-			else if (token == "map_Kd")	ReadDiffuseMap(currentLineSS, materials);
-			else if (token == "Ni")		ReadOpticalDensity(currentLineSS, materials);
-			else						continue;
-		}
-	}
-
-	// Bind each group to it's material. Loop through each group, and compare it´s
-	// material name (stored in mGroupMaterials) with each material name stored
-	// in MatName of the materials vector. If a match is found, the index to the
-	// array of materials is stored in groupMaterialArray, effectively tracking
-	// what material each group uses.
-	for (UINT i = 0; i < groupCount; ++i)
-	{
-		bool hasMat = false;
-		for (UINT j = 0; j < materials.size(); ++j)
-		{
-			if (mGroupMaterials[i] == materials[j].MatName)
-			{
-				materialToUseForGroup.push_back(j);
-				j = materials.size(); // Exit inner loop.
-				hasMat = true;
-			}
-		}
-		if (!hasMat)
-			materialToUseForGroup.push_back(0); // Use first material in array.
-	}
+	// Loop through every material library to parse .mtl file here if wanted.
 
 	mCompleteVertices = std::vector<Vertex>( );
 	Vertex tempVert;
 
 	// Create our vertices using the information we got from the file and store
 	// them in a vector.
-	for (int j = 0; j < mTotalVertices; ++j)
+	for (int j = 0; j < mPositionIndices.size(); ++j)
 	{
-		tempVert.Position = mVertexPositions[mVertexPositionIndices[j]];
-		tempVert.TexCoord = mVertexTextureCoordinates[mVertexTexCoordIndices[j]];
-		tempVert.Normal = mVertexNormals[mVertexNormalIndices[j]];
-
+		tempVert.Position = mPositions[mPositionIndices[j]];
+		tempVert.TexCoord = mTexCoords[mTexCoordIndices[j]]; // If not found it's 0
 		mCompleteVertices.push_back(tempVert);
 	}
+	
+	if (mNormals.size())
+	{
+		for (int j = 0; j < mPositionIndices.size(); ++j)
+			mCompleteVertices[j].Normal = mNormals[mNormalIndices[j]];
+	}
+	else // No normals specified, we generate them.
+	{
+		for (int j = 0; j < mPositionIndices.size(); j += 3)
+		{
+			XMVECTOR v0 = XMLoadFloat3(&mPositions[mPositionIndices[j  ]]);
+			XMVECTOR v1 = XMLoadFloat3(&mPositions[mPositionIndices[j+1]]);
+			XMVECTOR v2 = XMLoadFloat3(&mPositions[mPositionIndices[j+2]]);
 
-	*vertexData = mCompleteVertices.data();
-	*indexData = &mIndices[0];
-	vertexDataSize = sizeof(Vertex) * mTotalVertices;
-	nIndices = mMeshTriangles * 3;
-	indexSize = sizeof(DWORD);
+			XMVECTOR normal;
+			if (rightHanded) // No LH calculation because winding is reversed below?
+				normal = XMVector3Normalize(XMVector3Cross(v2 - v0, v1 - v0));
+			else 
+				normal = XMVector3Normalize(XMVector3Cross(v1 - v0, v2 - v0));
+
+			XMStoreFloat3(&mCompleteVertices[j].Normal, normal);
+			XMStoreFloat3(&mCompleteVertices[j+1].Normal, normal);
+			XMStoreFloat3(&mCompleteVertices[j+2].Normal, normal);
+
+			mNormalIndices[j] = mNormalIndices[j+1] = mNormalIndices[j+2] = j;
+		}
+	}
+
+	// For every material, add an entry to mBatches, indicating where that batch
+	// would start getting indices. Then insert all indices for that material
+	// into a common array of indices as well as clear the old one.
+	UINT start = 0;
+	for (int i = 0; i < mMaterials.size(); ++i)
+	{
+		std::vector<UINT> &indices = mMaterials[i].indices;
+		mBatches.push_back(start);
+		mCompleteIndices.insert(mCompleteIndices.end(), indices.begin(), indices.end());
+		start += indices.size();
+
+		indices.clear();
+	}
+
+	// The last element is not the start of a new batch, but rather used to
+	// get how many indices to draw.
+	mBatches.push_back(start);
+
+	if (rightHanded) // Reverse winding order
+	{
+		int temp;
+		for (int i = 0; i < mCompleteIndices.size(); i += 3)
+		{
+			temp = mCompleteIndices[i];
+			mCompleteIndices[i] = mCompleteIndices[i+2];
+			mCompleteIndices[i+2] = temp;
+		}
+	}
 
 	return true;
+}
+
+// -----------------------------------------------------------------------------
+// Reads what material to use.
+// -----------------------------------------------------------------------------
+// TODO: Right now, all materials have their own list of indices that will later
+// be assembled into a complete list of indices. Instead of adding to this list
+// for every vertex (ReadFace()), we know that until we stumble upon the next
+// usemtl line all faces are using the previously read material. That is, adding
+// a start value into a common list of indices to the current material as well as
+// current - start we know where in the common list the material has indices (start)
+// and how many (current - start). Then we set assign current to start and continue
+// using the material we are now using. Note that later the elements of the common
+// array would need to be rearranged so that all vertices for a particular material
+// are in order. Also note that after the file is read we need to add the last
+// entries (because we won't see another usemtl but vertices have been added for
+// the last material).
+void OBJLoader::ReadUsemtl(std::ifstream &fin)
+{
+	fin.unget();
+
+	char line[71];
+	fin.getline(line, 71);
+	
+	// Get the material name
+	char materialName[64];
+	sscanf_s(line, "usemtl %s", materialName, 64);
+
+	int matIndex = GetMaterial(materialName);
+
+	// If the material does not already exist, we add it.
+	if (matIndex == -1)
+	{
+		Material mat;
+		mat.name = new char[65];
+		strcpy(mat.name, materialName);
+
+		mMaterials.push_back(mat);
+		matIndex = mMaterials.size() - 1;
+	}
+
+	mCurrentMaterial = matIndex;
+}
+
+// --------------------------------------------------------------------------
+// Returns the index to the materials array for a certain material, or -1 if
+// the material name wasn't found.
+// --------------------------------------------------------------------------
+int OBJLoader::GetMaterial(const char *name)
+{
+	for (int i = 0; i < mMaterials.size(); ++i)
+	{
+		if (strcmp(name, mMaterials[i].name) == 0) // Equal
+			return i;
+	}
+
+	return -1;
 }
 
 // -----------------------------------------------------------------------------
@@ -157,85 +183,59 @@ bool OBJLoader::LoadOBJ(
 // -----------------------------------------------------------------------------
 void OBJLoader::ReadComment(std::ifstream& fin)
 {
-	while(mCheckChar != '\n')
-		mCheckChar = fin.get();
+	std::string dump;
+	getline(fin, dump);
 }
 
 // -----------------------------------------------------------------------------
-// Reads a vertex description (v for position, vt for tex coord, vn for normal)
-// and adds it to the correct vector. In addition it handles if the model was
-// created in a right-handed coordinate system or not.
+// Parse and store vertex data (position, tex coord or normal).
 // -----------------------------------------------------------------------------
-void OBJLoader::ReadVertexDescriptions(std::ifstream& fin, bool isRHCoordSys)
+void OBJLoader::ReadVertexDescriptions(std::ifstream& fin, bool rightHanded)
 {
-	mCheckChar = fin.get();
-	if (mCheckChar == ' ') // v - vertex position
+	float x, y, z;
+
+	switch (fin.get())
 	{
-		float vx, vy, vz;
-		fin >> vx >> vy >> vz; // Store the next three types.
+	case ' ': // v - position
+		fin >> x >> y >> z;
 
-		if (isRHCoordSys) // If model is from a RH Coord System, invert z-axis.
-			mVertexPositions.push_back(XMFLOAT3(vx, vy, vz * -1.0f));
-			//mVertexPositions.push_back(XMFLOAT3(vx, vz, vy));
-		else
-			mVertexPositions.push_back(XMFLOAT3(vx, vy, vz));
+		if (rightHanded) // Invert z
+			z = -z;
+
+		mPositions.push_back(XMFLOAT3(x, y, z));
+		break;
+	case 't': // vt - texture coordinate
+		fin >> x >> y;
+
+		if (rightHanded) // Reverse v-axis
+			y = 1.0f - y;
+
+		mTexCoords.push_back(XMFLOAT2(x, y));
+		break;
+	case 'n': // vn - normal
+		fin >> x >> y >> z;
+
+		if (rightHanded) // Invert z
+			z = -z;
+
+		mNormals.push_back(XMFLOAT3(x, y, z));
+		break;
 	}
-	else if (mCheckChar == 't') // vt - vertex texture coordinate
-	{
-		float vu, vv;
-		fin >> vu >> vv; // Store next two types.
 
-		if (isRHCoordSys) // Reverse v-axis.
-			mVertexTextureCoordinates.push_back(XMFLOAT2(vu, 1.0f-vv));
-		else
-			mVertexTextureCoordinates.push_back(XMFLOAT2(vu, vv));
-
-		mHasTexCoord = true; // We know the model uses texture coordinates.
-	}
-	else if (mCheckChar == 'n') // vn - vertex normal
-	{
-		float vx, vy, vz;
-		fin >> vx >> vy >> vz; // Store next three types.
-
-		if (isRHCoordSys) // Invert z-axis.
-			mVertexNormals.push_back(XMFLOAT3(vx, vy, vz * -1.0f));
-			//mVertexNormals.push_back(XMFLOAT3(vx, vz, vy));
-		else
-			mVertexNormals.push_back(XMFLOAT3(vx, vy, vz));
-
-		mHasNorm = true; // We know the model defines normals.
-	}
-}
-
-// -----------------------------------------------------------------------------
-// Creates a group by storing what index this group begins at.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadGroup(std::ifstream& fin, std::vector<UINT>& groupIndexStart, UINT& groupCount)
-{
-	mCheckChar = fin.get();
-	if (mCheckChar == ' ')
-	{
-		groupIndexStart.push_back(mVIndex); // Start index for this group
-		groupCount++;
-
-		// Groups can have names, therefore we read until the end of line.
-		// One could save groupnames here if necessary.
-		while (mCheckChar != '\n')
-			mCheckChar = fin.get();
-	}
+	fin.get(); // \n
 }
 
 // -----------------------------------------------------------------------------
 // Reads an entire line defining a face, adding vertices, checking for duplicates
 // as well as retriangulating.
 // -----------------------------------------------------------------------------
-void OBJLoader::ReadFace(std::ifstream& fin, bool isRHCoordSys, std::vector<UINT>& groupIndexStart, UINT& groupCount)
+void OBJLoader::ReadFace(std::ifstream& fin)
 {
-	mCheckChar = fin.get();
+	char curChar = fin.get();
 
 	// If the next character by any chance does not separate token and data
 	// we stop right away.
-	if (mCheckChar != ' ')
+	if (curChar != ' ')
 		return;
 
 	std::string face = ""; // Contains face vertices.
@@ -243,11 +243,11 @@ void OBJLoader::ReadFace(std::ifstream& fin, bool isRHCoordSys, std::vector<UINT
 
 	// Read and store the entire line, keeping track of how many triangles it
 	// consists of.
-	while (mCheckChar != '\n')
+	while (curChar != '\n')
 	{
-		face += mCheckChar; // Add the char to our face string.
-		mCheckChar = fin.get(); // Get next character.
-		if (mCheckChar == ' ') // If it's a space...
+		face += curChar; // Add the char to our face string.
+		curChar = fin.get(); // Get next character.
+		if (curChar == ' ') // If it's a space...
 			triangleCount++; // ...increase our triangle count.
 	}
 
@@ -272,46 +272,40 @@ void OBJLoader::ReadFace(std::ifstream& fin, bool isRHCoordSys, std::vector<UINT
 	std::string vertDef[3]; // Holds the first three vertex definitions.
 	int firstVIndex = 0, lastVIndex = 0; // Holds the first and last vertice´s index.
 	
-	// Extract the vertex definition (pos/texcoord/norm)
-	if (isRHCoordSys)
-		ss >> vertDef[2] >> vertDef[1] >> vertDef[0];
-	else
-		ss >> vertDef[0] >> vertDef[1] >> vertDef[2];
+	ss >> vertDef[0] >> vertDef[1] >> vertDef[2];
 
 	// Loop through the first three vertices and parse their vertex definitions.
 	for (UINT i = 0; i < 3; ++i)
 	{
-		ParseVertexDefinition(vertDef[i]);
+		UINT position, texCoord, normal;
+		ParseVertexDefinition(vertDef[i], position, texCoord, normal);
 
-		// This vertex has now been parsed, check to make sure there is at least
-		// one group for this to be part of.
-		if (groupCount == 0)
-		{
-			groupIndexStart.push_back(mVIndex); // Start index for this group
-			groupCount++;
-		}
+		// TODO: Here could be checked that if this vertex setup already exists
+		// we loop through all mPositionIndices (and texcoord indices and normal
+		// indices at the same time, they have the same amount of elements),
+		// and if they contain the same indices (mPositionIndices[i] == position)
+		// we don't add entries to those arrays and instead just reuse the index
+		// in the common array (commonIndices.push_back(i)). This way we don't
+		// recreate vertices that already exists but rather reuse them, resulting
+		// in a smaller vertex buffer.
 
-		// Avoid duplicate vertices
-		HandleVertexDuplication();
+		// När man lägger till en vertexpunkt (värden till mPositionIndices osv) ökar vertex-
+		// talet. Detta vertextal ska läggas in i materialets index array. Eftersom
+		// vertextalet kommer motsvara index till vertexpunkten som skapas senare kommer
+		// materialets array hålla indexvärden till kompletta vertexarrayen, alltså vilka
+		// vertexpunkter som ska renderas för det givna materialet.
+		mPositionIndices.push_back(position);
+		mTexCoordIndices.push_back(texCoord);
+		mNormalIndices.push_back(normal);
+		mMaterials[mCurrentMaterial].indices.push_back(mTotalVertices++);
 
 		// If this is the very first vertex in the face, we need to make sure
 		// the rest of the triangles use this vertex.
-		if (i == 0)
+		if (i == 0 )
 		{
-			firstVIndex = mIndices[mVIndex]; // First vertex index of this face.
+			firstVIndex = mPositionIndices.size()-1;
 		}
-
-		// If this was the last vertex in the first triangle, we will make sure
-		// the next triangle uses this one (eg. tri1(1,2,3) tri2(1,3,4) tri3(1,4,5))
-		if (i == 2)
-		{
-			lastVIndex = mIndices[mVIndex]; // Last vertex index of this triangle.
-		}
-
-		mVIndex++; // Increment index count.
 	}
-
-	mMeshTriangles++; // One triangle down.
 
 	// If there are more than three vertices in the face definition, we need
 	// to make sure we convert the face to triangles. We created our first triangle
@@ -319,48 +313,7 @@ void OBJLoader::ReadFace(std::ifstream& fin, bool isRHCoordSys, std::vector<UINT
 	// using the very first vertex of the face, and the last vertex from the triangle
 	// before the current triangle. Note that this might not work for concave
 	// faces, and must be taken care of appropriately.
-	RetriangulateFace(firstVIndex, lastVIndex, triangleCount, ss);
-}
-
-// -----------------------------------------------------------------------------
-// Handles vertex duplication by checking if the current vertex in temporary
-// memory already exists in the vertex arrays. If it does, we just reuse the
-// index, otherwise we add it.
-// -----------------------------------------------------------------------------
-void OBJLoader::HandleVertexDuplication()
-{
-	bool vertAlreadyExists = false;
-	if (mTotalVertices >= 3) // Make sure we at least have one triangle to check.
-	{
-		// Loop through all the vertices.
-		for (int iCheck = 0; iCheck < mTotalVertices; ++iCheck)
-		{
-			// If the vertex position and texture coordinate in memory are the same
-			// as the vertex position and texture coordinate we just got out of the
-			// obj file, we will set this face´s vertex index to the index of the
-			// vertex already stored. This makes sure we don't store vertices twice.
-			if (mVertexPositionIndexTemp == mVertexPositionIndices[iCheck] && !vertAlreadyExists)
-			{
-				if (mVertexTexCoordIndexTemp == mVertexTexCoordIndices[iCheck])
-				{
-					// If we've made it here, the vertex already exists.
-					vertAlreadyExists = true;
-					mIndices.push_back(iCheck); // Set index for this vertex.
-					iCheck = mTotalVertices; // Do this to exit loop nicely.
-				}
-			}
-		}
-	}
-
-	// If this vertex is not already in our vertex arrays, put it there.
-	if (!vertAlreadyExists)
-	{
-		mVertexPositionIndices.push_back(mVertexPositionIndexTemp);
-		mVertexTexCoordIndices.push_back(mVertexTexCoordIndexTemp);
-		mVertexNormalIndices.push_back(mVertexNormalIndexTemp);
-		mTotalVertices++; // New vertex created, add to total vertices.
-		mIndices.push_back(mTotalVertices-1); // Set index for this vertex.
-	}
+	RetriangulateFace(firstVIndex, triangleCount, ss);
 }
 
 // -----------------------------------------------------------------------------
@@ -368,32 +321,42 @@ void OBJLoader::HandleVertexDuplication()
 // Assumes that the first triangle has already been parsed, and the first
 // index of that triangle along with the last one is passed to the function.
 // -----------------------------------------------------------------------------
-void OBJLoader::RetriangulateFace(int firstVIndex, int lastVIndex, int triangleCount, istringstream& ss)
+// TODO: This method isn't really required. It works basically the same as in
+// ReadFace, except that the first two vertices of this triangle are reused from
+// the ones defined earlier. This could easily be incorporated in ReadFace by
+// setting first vertex index to mPositionIndices.size() BEFORE any vertices
+// are added. Then the face declaration is simply read until there are no more
+// vertex definitions. Every vertex with loop index greater than 2 (4th vertex
+// or more) is added exactly the same, but also reuses two vertices, exactly as
+// is done in this method. This also removes anything that has to do with trianglecount.
+void OBJLoader::RetriangulateFace(int firstVIndex, int triangleCount, std::istringstream& ss)
 {
 	// Loop through the next vertices to create new triangles. Note that we
 	// subtract one because one triangle has been handled already!
 	for (int l = 0; l < triangleCount-1; l++)
 	{
-		// First vertex (the very first vertex of the face too)
-		mIndices.push_back(firstVIndex); // Set index for this vertex.
-		mVIndex++;
+		// Reuse the first vertex of the face (copy the indices of that vertex)
+		mPositionIndices.push_back(mPositionIndices[firstVIndex]);
+		mTexCoordIndices.push_back(mTexCoordIndices[firstVIndex]);
+		mNormalIndices.push_back(mNormalIndices[firstVIndex]);
+		mMaterials[mCurrentMaterial].indices.push_back(mTotalVertices++);
 
-		// Second vertex (the last vertex used in the tri before this one)
-		mIndices.push_back(lastVIndex); // Set index for this vertex.
-		mVIndex++;
+		// Reuse the last vertex of the previous triangle (size - 2 because
+		// size - 1 is the one we just added for this triangle!)
+		mPositionIndices.push_back(mPositionIndices[mPositionIndices.size()-2]);
+		mTexCoordIndices.push_back(mTexCoordIndices[mTexCoordIndices.size()-2]);
+		mNormalIndices.push_back(mNormalIndices[mNormalIndices.size()-2]);
+		mMaterials[mCurrentMaterial].indices.push_back(mTotalVertices++);
 		
 		std::string vertDef; // Holds one vertex definition at a time.
 		ss >> vertDef;
-		ParseVertexDefinition(vertDef);
+		UINT position, texCoord, normal;
+		ParseVertexDefinition(vertDef, position, texCoord, normal);
 
-		// Check for duplicate vertices
-		HandleVertexDuplication();
-
-		// Set the second vertex for the next triangle to the last vertex we got.
-		lastVIndex = mIndices[mVIndex]; // The last vertex index of this triangle.
-
-		mMeshTriangles++; // New triangle defined.
-		mVIndex++;
+		mPositionIndices.push_back(position);
+		mTexCoordIndices.push_back(texCoord);
+		mNormalIndices.push_back(normal);
+		mMaterials[mCurrentMaterial].indices.push_back(mTotalVertices++);
 	}
 }
 
@@ -401,206 +364,42 @@ void OBJLoader::RetriangulateFace(int firstVIndex, int lastVIndex, int triangleC
 // Parses a vertex definition and sets the temporary values for vertex position,
 // texture coordinate, and normal.
 // -----------------------------------------------------------------------------
-void OBJLoader::ParseVertexDefinition(std::string vertDef)
+void OBJLoader::ParseVertexDefinition(std::string vertDef, UINT &position, UINT &texCoord, UINT &normal)
 {
-	std::string vertPart; // Part of the vertex definition, e.g. position index.
-	int whichPart = 0; // Position, texcoord, or normal. Increments after every parsed index.
-
-	// Parse the individual indices of the vertex definition by finding the
-	// divider "/" or last character of the string. When one of those is
-	// found, everything read up until now (an integer) is parsed as an
-	// integer and stored in a temp variable.
-	for (UINT j = 0; j < vertDef.length(); ++j) // Loop through each character.
+	// Read the indices of the vertex definition.
+	int ptn[] = { 0, 0, 0 };
+	int n = 0;
+	const char *loc = vertDef.c_str();
+	for (int i = 0; i < 3; ++i) // Three indices in a vertdef
 	{
-		// If this isn't a divider "/", add a char to our vertPart.
-		if (vertDef[j] != '/')
-			vertPart += vertDef[j];
-
-		// If the current char is a divider "/", or it's the last character
-		// in the string, it's time to store the part as an integer value.
-		if (vertDef[j] == '/' || j == vertDef.length() - 1)
-		{
-			istringstream stringToInt(vertPart); // Used to convert string to int.
-
-			switch (whichPart)
-			{
-				// If position
-			case 0:
-				stringToInt >> mVertexPositionIndexTemp; // Store the index.
-				mVertexPositionIndexTemp--; // C++ arrays start with 0, obj starts with 1.
-
-				// If we're at the last index of the string, it means that
-				// position was the only thing defined.
-				if (j == vertDef.length()-1)
-				{
-					mVertexTexCoordIndexTemp = 0;
-					mVertexNormalIndexTemp = 0;
-				}
-				break;
-
-				// If tex coord
-			case 1:
-				// Check to see if there even is a tex coord. An empty string
-				// means that another divider was found immediately, which in
-				// turn means that a texcoord was not defined.
-				if (vertPart != "")
-				{
-					stringToInt >> mVertexTexCoordIndexTemp; // Store index.
-					mVertexTexCoordIndexTemp--; // Zero-based.
-				}
-				else // If there is no tex coord, make a default
-				{
-					mVertexTexCoordIndexTemp = 0;
-				}
-
-				// If the current char is the last in the string, then
-				// there must be no normal, so set a default one.
-				if (j == vertDef.length()-1)
-				{
-					mVertexNormalIndexTemp = 0;
-				}
-				break;
-
-				// If normal
-			case 2:
-				stringToInt >> mVertexNormalIndexTemp; // Store index.
-				mVertexNormalIndexTemp--; // Zero-based.
-				break;
-			}
-
-			vertPart = ""; // Get ready for next vertex part.
-			whichPart++; // Move on to next vertex part.
-		}
-	}
-}
-
-// -----------------------------------------------------------------------------
-// Reads material filename.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadMtlLib(std::ifstream& fin)
-{
-	std::string token = "";
-
-	while(mCheckChar != ' ')
-	{
-		token += mCheckChar;
-		mCheckChar = fin.get();
+		// We only store in one variable (number of characters read n does not
+		// increase assignment count), therefore the return value can be used
+		// as a success value, indicating a value was read or not.
+		int success = sscanf_s(loc, "%i%n", &ptn[i], &n);
+		loc += success * n + 1; // Increase pointer by number of read chars + 1 for slash.
+		if (loc - vertDef.c_str() >= strlen(vertDef.c_str())) // Parsed entire string? Early break.
+			break;
 	}
 
-	// If the token is correct, store the material library´s filename.
-	if (token == "mtllib")
-	{
-		std::string filename = "";
-		fin >> filename;
-		mMeshMatLibs.push_back(filename);
-	}
-}
+	// Position index
+	if (ptn[0] > 0)
+		position = ptn[0] - 1;
+	else
+		position = mPositions.size() + ptn[0];
 
-// -----------------------------------------------------------------------------
-// Reads what material to use.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadUseMtl(std::ifstream& fin)
-{
-	std::string token = "";
+	// Tex coord index
+	if (ptn[1] > 0)
+		texCoord = ptn[1] - 1;
+	else if (ptn[1] < 0)
+		texCoord = mTexCoords.size() + ptn[1];
+	else
+		texCoord = 0;
 
-	while(mCheckChar != ' ')
-	{
-		token += mCheckChar;
-		mCheckChar = fin.get();
-	}
-
-	if (token == "usemtl")
-	{
-		mMeshMaterialsTemp = ""; // Make sure this is cleared.
-		fin >> mMeshMaterialsTemp; // Get next type (string)
-		mGroupMaterials.push_back(mMeshMaterialsTemp);
-	}
-}
-
-// -----------------------------------------------------------------------------
-// Stores illumination model.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadIllum(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	ss >> materials[materials.size()-1].Illum;
-}
-
-// -----------------------------------------------------------------------------
-// Stores diffuse color for last material.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadDiffuseColor(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	//ss >> materials[materials.size()-1].Diffuse.x;
-	//ss >> materials[materials.size()-1].Diffuse.y;
-	//ss >> materials[materials.size()-1].Diffuse.z;
-}
-
-// -----------------------------------------------------------------------------
-// Stores ambient color for last material.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadAmbientColor(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	ss >> materials[materials.size()-1].Ambient.x;
-	ss >> materials[materials.size()-1].Ambient.y;
-	ss >> materials[materials.size()-1].Ambient.z;
-}
-
-// -----------------------------------------------------------------------------
-// Stores transmission filter for last material.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadTransmissionFilter(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	ss >> materials[materials.size()-1].TransmissionFilter.x;
-	ss >> materials[materials.size()-1].TransmissionFilter.y;
-	ss >> materials[materials.size()-1].TransmissionFilter.z;
-}
-
-// -----------------------------------------------------------------------------
-// Reads a texture map and checks if it already exists. If it does, the material
-// reuses the already loaded one, if not, a ShaderResourceView is created and used.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadDiffuseMap(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	std::string fileNamePath;
-
-	// Get the file path - We read the pathname char by char since
-	// pathnames can sometimes contain spaces, so we will read until
-	// we find the file extension.
-	bool textFilePathEnd = false;
-	while (!textFilePathEnd)
-	{
-		mCheckChar = ss.get();
-
-		fileNamePath += mCheckChar;
-
-		if (mCheckChar == '.')
-		{
-			// Assumes a three character long extension.
-			for (UINT i = 0; i < 3; ++i)
-				fileNamePath += ss.get();
-
-			textFilePathEnd = true;
-		}
-	}
-
-	materials[materials.size()-1].DiffuseTexture = fileNamePath;
-}
-
-// -----------------------------------------------------------------------------
-// Stores optical density.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadOpticalDensity(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	ss >> materials[materials.size()-1].OpticalDensity;
-}
-
-// -----------------------------------------------------------------------------
-// Creates a new material. Reads the name of material and stores it.
-// -----------------------------------------------------------------------------
-void OBJLoader::ReadNewMtl(std::istringstream& ss, std::vector<SurfaceMaterial>& materials)
-{
-	// New material, set it´s defaults.
-	SurfaceMaterial tempMat;
-	ss >> tempMat.MatName;
-	materials.push_back(tempMat);
+	// Normal index (if zero, we keep it like that)
+	if (ptn[2] > 0)
+		normal = ptn[2] - 1;
+	else if (ptn[2] < 0)
+		normal = mNormals.size() + ptn[2];
+	else
+		normal = 0;
 }

@@ -1,7 +1,7 @@
 #include "Model.h"
 #include "DXUT.h"
 
-Model::Model() : mVBuffer(0), mIBuffer(0), mMeshGroups(0)
+Model::Model() : mVBuffer(0), mIBuffer(0)
 {
 }
 
@@ -19,41 +19,39 @@ Model::~Model()
 	SAFE_RELEASE(mIBuffer);
 }
 
-void Model::Render(ID3D11DeviceContext *context)
+void Model::Render( ID3D11DeviceContext *pd3dImmediateContext )
 {
-	UINT stride = sizeof(Vertex);
+	UINT stride = sizeof( Vertex );
 	UINT offset = 0;
-	context->IASetVertexBuffers(0, 1, &mVBuffer, &stride, &offset);
-	context->IASetIndexBuffer(mIBuffer, DXGI_FORMAT_R32_UINT, 0);
+	pd3dImmediateContext->IASetVertexBuffers( 0, 1, &mVBuffer, &stride, &offset );
+	pd3dImmediateContext->IASetIndexBuffer( mIBuffer, DXGI_FORMAT_R32_UINT, 0 );
 
-	context->DrawIndexed(mGroupIndexStart[mMeshGroups], 0, 0);
+	pd3dImmediateContext->DrawIndexed(mBatches[mBatches.size()-1], 0, 0);
 }
 
-void Model::RenderSubMesh(ID3D11DeviceContext *context, int submesh)
+void Model::RenderBatch( ID3D11DeviceContext *pd3dImmediateContext, int batch )
 {
-	int indexStart = mGroupIndexStart[submesh];
-	int indexDrawAmount = mGroupIndexStart[submesh+1] - indexStart;
-
-	UINT stride = sizeof(Vertex);
+	UINT stride = sizeof( Vertex );
 	UINT offset = 0;
-	context->IASetVertexBuffers(0, 1, &mVBuffer, &stride, &offset);
-	context->IASetIndexBuffer(mIBuffer, DXGI_FORMAT_R32_UINT, 0);
+	pd3dImmediateContext->IASetVertexBuffers( 0, 1, &mVBuffer, &stride, &offset );
+	pd3dImmediateContext->IASetIndexBuffer( mIBuffer, DXGI_FORMAT_R32_UINT, 0 );
 
-	context->DrawIndexed(indexDrawAmount, indexStart, 0);
+	int start = mBatches[batch];
+	int count = mBatches[batch + 1] - start;
+	pd3dImmediateContext->DrawIndexed( count, start, 0 );
 }
 
-bool Model::LoadOBJ(const char *filename, bool isRHCoordSys, ID3D11Device *device, std::vector<UINT>& materialToUseForGroup,
-	std::vector<OBJLoader::SurfaceMaterial>& materials)
+bool Model::LoadOBJ( const char *filename, bool rightHanded, ID3D11Device *device )
 {
-	void *vertexData = nullptr;
-	void *indexData = nullptr;
-	long vertexDataSize = 0;
-	UINT indices = 0;
-	UINT indexSize = 0;
-
 	OBJLoader loader;
-	if (!loader.LoadOBJ(filename, mGroupIndexStart, materialToUseForGroup, mMeshGroups,
-		isRHCoordSys, materials, &vertexData, &indexData, vertexDataSize, indices, indexSize)) return false;
+	if (!loader.LoadOBJ(filename, rightHanded)) return false;
+
+	const void *vertexData = loader.VertexData();
+	const void *indexData = loader.IndexData();
+	UINT vertexDataSize = loader.VertexDataSize();
+	UINT indices = loader.NumIndices();
+	UINT indexSize = loader.IndexSize();
+	mBatches = loader.Batches( );
 
 	// Create index buffer
 	D3D11_BUFFER_DESC ibd;

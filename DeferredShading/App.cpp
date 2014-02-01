@@ -74,35 +74,23 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( mDialogResourceManager.OnD3D11CreateDevice( pd3dDevice, DXUTGetD3D11DeviceContext() ) );
 	V_RETURN( mD3DSettingsDlg.OnD3D11CreateDevice( pd3dDevice ) );
 	mTxtHelper = new CDXUTTextHelper( pd3dDevice, DXUTGetD3D11DeviceContext(), &mDialogResourceManager, 15 );
-
+	
 	mModel = new Model();
-	if ( !mModel->LoadOBJ( "bth.obj", false, pd3dDevice, mBthMaterialToUseForGroup, mBthMaterials ) )
+	if (!mModel->LoadOBJ( "bth.obj", true, pd3dDevice ))
 		return E_FAIL;
 
-	// Loop through every material (group) and load it's diffuse texture.
-	for (UINT i = 0; i < mBthMaterials.size(); ++i)
-	{
-		ID3D11ShaderResourceView *srv;
-		D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, mBthMaterials[i].DiffuseTexture.c_str(),
-			0, 0, &srv, 0);
-		mMeshSRV.push_back(srv);
-	}
-
+	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
+		return E_FAIL;
+	
 	mSphereModel = new Model();
-	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice, mSphereMaterialToUseForGroup, mSphereMaterials ) )
+	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice ) )
 		return E_FAIL;
 
-	// Loop through every material (group) and load it's diffuse texture.
-	for (UINT i = 0; i < mSphereMaterials.size(); ++i)
-	{
-		ID3D11ShaderResourceView *srv;
-		D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, mSphereMaterials[i].DiffuseTexture.c_str(),
-			0, 0, &srv, 0);
-		mSphereSRV.push_back(srv);
-	}
+	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "earthDiffuse.dds", 0, 0, &mSphereSRV, 0 ) ) )
+		return E_FAIL;
 
 	mConeModel = new Model();
-	if (!mConeModel->LoadOBJ( "cone.obj", true, pd3dDevice, mConeMaterialToUseForGroup, mConeMaterials ) )
+	if (!mConeModel->LoadOBJ( "cone.obj", true, pd3dDevice ) )
 		return E_FAIL;
 
 	if (FAILED(D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "ColorCube.dds", 0, 0, &mProjPointLightColor, 0 ) ) )
@@ -196,17 +184,8 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_DELETE(mSphereModel);
 	SAFE_DELETE(mConeModel);
 
-	for (UINT i = 0; i < mMeshSRV.size(); ++i)
-		SAFE_RELEASE(mMeshSRV[i]);
-	mMeshSRV.clear();
-	mBthMaterials.clear();
-	mBthMaterialToUseForGroup.clear();
-
-	for (UINT i = 0; i < mSphereSRV.size(); ++i)
-		SAFE_RELEASE(mSphereSRV[i]);
-	mSphereSRV.clear();
-	mSphereMaterials.clear();
-	mSphereMaterialToUseForGroup.clear();
+	SAFE_RELEASE( mBthColor );
+	SAFE_RELEASE( mSphereSRV );
 
 	SAFE_RELEASE( mProjPointLightColor );
 	SAFE_RELEASE( mProjSpotlightColor );
@@ -365,10 +344,10 @@ bool App::Init( )
 
 	XMStoreFloat4x4( &mFloorWorld, XMMatrixIdentity() );
 
-	uniformScaleFactor = 1.0f;
+	uniformScaleFactor = 0.01f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
-	rotation = XMMatrixRotationY(XMConvertToRadians(0));
-	translation = XMMatrixTranslation(0, 0, 0);
+	rotation = XMMatrixRotationX(XMConvertToRadians(0));
+	translation = XMMatrixTranslation(0, 20, 20);
 	world = scale * rotation * translation;
 
 	return true;
@@ -450,15 +429,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 			// Set object specific constants.
 			mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 			mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-
-			// Loop through every submesh the current mesh consists of.
-			for (UINT s = 0; s < mModel->SubMeshes(); ++s)
-			{
-				mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mMeshSRV[mBthMaterialToUseForGroup[s]]);
-
-				mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-				mModel->RenderSubMesh( pd3dImmediateContext, s );
-			}
+			mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mBthColor);
+			mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+			mModel->Render( pd3dImmediateContext );
 		}
 
 		//
@@ -496,15 +469,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// Set object specific constants.
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-
-		// Loop through every submesh the current mesh consists of.
-		for (UINT s = 0; s < mSphereModel->SubMeshes(); ++s)
-		{
-			mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV[mSphereMaterialToUseForGroup[s]]);
-
-			mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-			mSphereModel->RenderSubMesh( pd3dImmediateContext, s );
-		}
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mSphereModel->Render( pd3dImmediateContext );
 
 		//
 		// Cone model
@@ -518,8 +485,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// Set object specific constants.
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mMeshSRV[0]);
-
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mConeModel->Render( pd3dImmediateContext );
 	}

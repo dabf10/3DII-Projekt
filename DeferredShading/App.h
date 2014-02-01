@@ -71,15 +71,6 @@ public:
 	bool Init( );
 
 private:
-	struct ModelMaterial
-	{
-		XMFLOAT4 Ambient;
-		XMFLOAT4 Diffuse;
-		XMFLOAT4 Specular;
-		XMFLOAT3 TransmissionFilter;
-		float OpticalDensity;
-	};
-
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
 	bool BuildVertexLayout( ID3D11Device *device );
@@ -108,27 +99,21 @@ private:
 private:
 	Model *mModel;
 	XMFLOAT4X4 mBthWorld[2];
-	std::vector<UINT> mBthMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mBthMaterials;
-	std::vector<ID3D11ShaderResourceView*> mMeshSRV;
+	ID3D11ShaderResourceView *mBthColor;
 
 	Model *mSphereModel;
 	XMFLOAT4X4 mSphereWorld;
-	std::vector<UINT> mSphereMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mSphereMaterials;
-	std::vector<ID3D11ShaderResourceView*> mSphereSRV;
+	ID3D11ShaderResourceView *mSphereSRV;
 
 	Model *mConeModel;
 	XMFLOAT4X4 mConeWorld;
-	std::vector<UINT> mConeMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mConeMaterials;
 
 	ID3D11ShaderResourceView *mProjPointLightColor;
 	ID3D11ShaderResourceView *mProjSpotlightColor;
 
 	ID3D11Buffer *mFloorVB;
-	ID3D11ShaderResourceView *mFloorTex;
 	XMFLOAT4X4 mFloorWorld;
+	ID3D11ShaderResourceView *mFloorTex;
 
 	Camera mCamera;
 
