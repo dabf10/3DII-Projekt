@@ -140,12 +140,12 @@ void OBJLoader::ReadUsemtl(std::ifstream &fin)
 {
 	fin.unget();
 
-	char line[71];
-	fin.getline(line, 71);
+	char line[256];
+	fin.getline(line, 256);
 	
 	// Get the material name
-	char materialName[64];
-	sscanf_s(line, "usemtl %s", materialName, 64);
+	char materialName[249];
+	sscanf_s(line, "usemtl %s", materialName, 249);
 
 	int matIndex = GetMaterial(materialName);
 
@@ -153,7 +153,7 @@ void OBJLoader::ReadUsemtl(std::ifstream &fin)
 	if (matIndex == -1)
 	{
 		Material mat;
-		mat.name = new char[65];
+		mat.name = new char[249];
 		strcpy(mat.name, materialName);
 
 		mMaterials.push_back(mat);
