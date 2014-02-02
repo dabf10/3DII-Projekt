@@ -49,6 +49,14 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 diffuseLight = light.rgb;
 	float specularLight = light.a;
 
+	// TODO: Det verkar som att man borde kunna låta ljusshaders returnera
+	// (diffus som vanligt) + specularLight * lightcolor. Då returneras EN färg
+	// och specularLight behöver inte finnas med i lightmap överhuvudtaget.
+	// Det sparar in fjärde kanalen (räcker med RGB) samt att specularlight får
+	// ljusets färg och inte alltid vit. I denna shadern kommer det betyda att
+	// man bara läser in ljus från lightmap som rgb (inget spec i a) som man
+	// multiplicerar med gbufferns färg rakt av. Ljusshaders kommer behöva anpassas
+	// så de returnerar float3
 	return float4((diffuseColor * diffuseLight + specularLight), 1);
 	//return float4((diffuseColor * diffuseLight * specularLight), 1); // Intressant effekt :)
 }

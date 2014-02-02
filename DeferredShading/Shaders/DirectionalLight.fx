@@ -99,7 +99,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 diffuseLight = NdL * gLightColor.rgb;
 
 	// Reflection vector
-	float3 reflectionVector = normalize(reflect(lightVector, normal));
+	float3 reflectionVector = normalize(reflect(-lightVector, normal));
 
 	// Camera-to-surface vector (camera position is origin because of view space :) )
 	float3 directionToCamera = normalize(-posVS.xyz);

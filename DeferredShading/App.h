@@ -74,15 +74,6 @@ public:
 	bool Init( );
 
 private:
-	struct ModelMaterial
-	{
-		XMFLOAT4 Ambient;
-		XMFLOAT4 Diffuse;
-		XMFLOAT4 Specular;
-		XMFLOAT3 TransmissionFilter;
-		float OpticalDensity;
-	};
-
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
 	bool BuildVertexLayout( ID3D11Device *device );
@@ -98,31 +89,35 @@ private:
 	void RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, float radius, float intensity );
 	void RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float radius, float intensity,
-		float angle, float decayExponent );
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float innerAngleDeg );
+	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float length );
+	void RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
+		XMFLOAT3 position, float radius, float intensity, float fTime ); // Remove time, it's just to test light animation
+	void RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float innerAngleDeg );
 
 private:
 	Model *mModel;
 	SkinnedData *mAnimatedModel;
 	XMFLOAT4X4 mBthWorld[2];
-	std::vector<UINT> mBthMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mBthMaterials;
-	std::vector<ID3D11ShaderResourceView*> mMeshSRV;
+	ID3D11ShaderResourceView *mBthColor;
 
 	Model *mSphereModel;
 	XMFLOAT4X4 mSphereWorld;
-	std::vector<UINT> mSphereMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mSphereMaterials;
-	std::vector<ID3D11ShaderResourceView*> mSphereSRV;
+	ID3D11ShaderResourceView *mSphereSRV;
 
 	Model *mConeModel;
 	XMFLOAT4X4 mConeWorld;
-	std::vector<UINT> mConeMaterialToUseForGroup;
-	std::vector<OBJLoader::SurfaceMaterial> mConeMaterials;
+
+	ID3D11ShaderResourceView *mProjPointLightColor;
+	ID3D11ShaderResourceView *mProjSpotlightColor;
 
 	ID3D11Buffer *mFloorVB;
-	ID3D11ShaderResourceView *mFloorTex;
 	XMFLOAT4X4 mFloorWorld;
+	ID3D11ShaderResourceView *mFloorTex;
 
 	Camera mCamera;
 
@@ -141,6 +136,7 @@ private:
 	ID3D11ShaderResourceView *mLightSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
+	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
 	ID3D11ShaderResourceView *mMainDepthSRV;
 	// Final image
 	ID3D11RenderTargetView *mCompositeRT;
@@ -156,11 +152,18 @@ private:
 	ID3DX11EffectTechnique *mPointLightTech;
 	ID3DX11Effect *mSpotlightFX;
 	ID3DX11EffectTechnique *mSpotlightTech;
+	ID3DX11Effect *mCapsuleLightFX;
+	ID3DX11EffectTechnique *mCapsuleLightTech;
+	ID3DX11Effect *mProjPointLightFX;
+	ID3DX11EffectTechnique *mProjPointLightTech;
+	ID3DX11Effect *mProjSpotlightFX;
+	ID3DX11EffectTechnique *mProjSpotlightTech;
 
 	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
 
-	ID3D11DepthStencilState *mNoDepthWrite;
+	ID3D11DepthStencilState *mNoDepthTest;
+	ID3D11DepthStencilState *mDepthGreaterEqual;
 	ID3D11BlendState *mAdditiveBlend;
 	ID3D11RasterizerState *mCullBack;
 	ID3D11RasterizerState *mCullFront;

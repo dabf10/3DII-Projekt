@@ -1,3 +1,4 @@
+float4x4 gLightViewProj;
 float4x4 gWVP;
 float4x4 gWorldView;
 float4x4 gProj;
@@ -5,13 +6,43 @@ float4x4 gProj;
 float3 gDirectionVS;
 float gCosOuter;
 float gCosInner;
-float3 gLightColor;
 float3 gLightPositionVS;
 float gLightRangeRcp;
+float gLightIntensity;
+
+Texture2D gProjLightTex : register( t0 );
 
 Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
 Texture2D gDepthMap;
+
+SamplerState gSamLinear
+{
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = WRAP;
+	AddressV = WRAP;
+};
+
+// Important: If position is in VS, gLightViewProj needs to be
+// view -> world -> light space -> light projection. In other words,
+// gLightViewProj must correctly transform a position to light proj space.
+float2 GetProjPos( float4 position )
+{
+	// Project position. We don't care about depth, which is why z is skipped.
+	// w is saved however, so that we can divide xy by it to finish perspective
+	// projection (this is automatically done on SV_Position between VS and PS).
+	float3 projTexXYW = mul( position, gLightViewProj ).xyw;
+	projTexXYW.xy /= projTexXYW.z; // Perspective correction
+
+	// Transform from [-1,1] to [0,1]
+	float2 UV = (projTexXYW.xy + 1.0.xx) * float2(0.5, -0.5);
+	return UV;
+}
+
+float3 GetLightColor( float2 uv )
+{
+	return gLightIntensity * gProjLightTex.Sample( gSamLinear, uv ).xyz;
+}
 
 struct VS_IN
 {
@@ -57,6 +88,9 @@ float4 PS( VS_OUT input ) : SV_TARGET
 
 	// ----------------------------------------------------
 
+	float2 uv = GetProjPos(float4(posVS, 1));
+	float3 lightColor = GetLightColor(uv);
+
 	float3 toLight = gLightPositionVS - posVS;
 	float distToLight = length(toLight);
 	toLight /= distToLight; // Normalize
@@ -72,7 +106,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	
 	// Diffuse light
 	float NdL = saturate( dot( normal, toLight ) );
-	float3 diffuseLight = NdL * gLightColor.rgb;
+	float3 diffuseLight = NdL * lightColor.rgb;
 
 	// Reflection vector
 	float3 reflectionVector = normalize(reflect(-toLight, normal));
