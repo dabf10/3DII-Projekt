@@ -19,8 +19,6 @@ App::App() :
 	mMainDepthDSV( 0 ),
 	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
-	mCompositeRT( 0 ),
-	mCompositeSRV( 0 ),
 	mFullscreenTextureFX( 0 ),
 	mFillGBufferFX( 0 ),
 	mDirectionalLightFX( 0 ),
@@ -46,7 +44,8 @@ App::App() :
 	mCullFront( 0 ),
 	mCullNone( 0 ),
 	mSSAO( 0 ),
-	mGBuffer( 0 )
+	mGBuffer( 0 ),
+	mPostProcessRT( 0 )
 {
 }
 
@@ -255,6 +254,8 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
 
 	mSSAO = new SSAO( pd3dDevice, pBackBufferSurfaceDesc->Width / 2, pBackBufferSurfaceDesc->Height / 2, 18, 0.1f, 1.5f );
 	mGBuffer = new GBuffer( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height );
+	mPostProcessRT = new PostProcessRT( );
+	V_RETURN( mPostProcessRT->Init( pd3dDevice, pBackBufferSurfaceDesc->Width, pBackBufferSurfaceDesc->Height ) );
 
 	return S_OK;
 }
@@ -271,10 +272,9 @@ void App::OnD3D11ReleasingSwapChain( )
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
-	SAFE_RELEASE( mCompositeRT );
-	SAFE_RELEASE( mCompositeSRV );
 	SAFE_DELETE( mSSAO );
 	SAFE_DELETE( mGBuffer );
+	SAFE_DELETE( mPostProcessRT );
 }
 
 
@@ -520,13 +520,16 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mMainDepthSRV, mGBuffer->NormalSRV(), mCamera.Proj(), pd3dImmediateContext );
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
-	pd3dImmediateContext->OMSetRenderTargets( 1, &mCompositeRT, 0 );
 
 	//
 	// Render a full-screen quad that combines the light from the light map
 	// with the color map from the G-Buffer
 	//
-	{		
+	{
+		mPostProcessRT->Flip();
+		ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV();
+		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+
 		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
 
@@ -539,41 +542,46 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	}
 
-	// Render to back buffer.
-	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
-
 	//
 	// Generate an old-film looking effect
 	//
-	//{
-	//	float sepia = 0.6f;
-	//	float noise = 0.06f;
-	//	float scratch = 0.3f;
-	//	float innerVignetting = 1.0f - 0.3f;
-	//	float outerVignetting = 1.4f - 0.3f;
-	//	float random = (float)rand()/(float)RAND_MAX;
-	//	float timeLapse = fElapsedTime;
+	if (false)
+	{
+		mPostProcessRT->Flip( );
+		ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV( );
+		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
-	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mCompositeSRV);
-	//	mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
-	//	mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
-	//	mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
-	//	mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
-	//	mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
-	//	mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
-	//	mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
+		float sepia = 0.6f;
+		float noise = 0.06f;
+		float scratch = 0.3f;
+		float innerVignetting = 1.0f - 0.3f;
+		float outerVignetting = 1.4f - 0.3f;
+		float random = (float)rand()/(float)RAND_MAX;
+		float timeLapse = fElapsedTime;
 
-	//	mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//	pd3dImmediateContext->Draw( 3, 0 );
+		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource(mPostProcessRT->GetSRV());
+		mOldFilmFX->GetVariableByName("gSepiaValue")->AsScalar()->SetFloat(sepia);
+		mOldFilmFX->GetVariableByName("gNoiseValue")->AsScalar()->SetFloat(noise);
+		mOldFilmFX->GetVariableByName("gScratchValue")->AsScalar()->SetFloat(scratch);
+		mOldFilmFX->GetVariableByName("gInnerVignetting")->AsScalar()->SetFloat(innerVignetting);
+		mOldFilmFX->GetVariableByName("gOuterVignetting")->AsScalar()->SetFloat(outerVignetting);
+		mOldFilmFX->GetVariableByName("gRandomValue")->AsScalar()->SetFloat(random);
+		mOldFilmFX->GetVariableByName("gTimeLapse")->AsScalar()->SetFloat(timeLapse);
 
-	//	// Unbind shader resources
-	//	mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
-	//	mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//}
+		mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		pd3dImmediateContext->Draw( 3, 0 );
+
+		// Unbind shader resources
+		mOldFilmFX->GetVariableByName("gCompositeImage")->AsShaderResource()->SetResource( 0 );
+		mOldFilmFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	}
 
 	// Render a full screen triangle to place content of CompositeSRV on the back buffer.
 	{
-		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mCompositeSRV);
+		mPostProcessRT->Flip( );
+		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 ); // Render to back buffer
+
+		mFullscreenTextureFX->GetVariableByName("gTexture")->AsShaderResource()->SetResource(mPostProcessRT->GetSRV());
 
 		mFullscreenTextureFX->GetTechniqueByName("MultiChannel")->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		pd3dImmediateContext->Draw( 3, 0 );
@@ -916,22 +924,6 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
 	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
 	
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
-	//
-	// Composite
-	//
-
-	// TODO: Is it possible to render stuff to the regular render target,
-	// and use that as input for post-processing so that we don't need this
-	// intermediate one? It seems strange though, to use a resource as both
-	// render target and shader input at the same time.
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mCompositeRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mCompositeSRV ) );
-
 	// Views saves reference
 	SAFE_RELEASE( tex );
 

@@ -384,10 +384,12 @@
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="Model.cpp" />
     <ClCompile Include="OBJLoader.cpp" />
+    <ClCompile Include="PostProcessRT.cpp" />
     <ClCompile Include="SkinnedData.cpp" />
     <ClCompile Include="SSAO.cpp" />
     <ClInclude Include="GBuffer.h" />
     <ClInclude Include="GnomeImporter.h" />
+    <ClInclude Include="PostProcessRT.h" />
     <ClInclude Include="SkinnedData.h" />
     <ClInclude Include="SSAO.h" />
     <None Include="DXUT\Optional\directx.ico" />

@@ -14,6 +14,7 @@
 #include "d3dx11effect.h"
 #include "SkinnedData.h"
 #include "GnomeImporter.h"
+#include "PostProcessRT.h"
 
 
 #ifdef _DEBUG
@@ -138,9 +139,6 @@ private:
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
 	ID3D11ShaderResourceView *mMainDepthSRV;
-	// Final image
-	ID3D11RenderTargetView *mCompositeRT;
-	ID3D11ShaderResourceView *mCompositeSRV;
 
 	ID3DX11Effect *mFullscreenTextureFX;
 
@@ -174,6 +172,8 @@ private:
 	SSAO *mSSAO;
 
 	GBuffer *mGBuffer;
+
+	PostProcessRT *mPostProcessRT;
 };
 
 #endif // _APP_H_

@@ -35,6 +35,9 @@
     <Filter Include="Application\GnomeLoader">
       <UniqueIdentifier>{c720df1d-fd38-448f-a420-348b3f45d1e7}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Application\PostProcessRT">
+      <UniqueIdentifier>{ece79cbd-32ca-450d-bf2a-0bfc21402248}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <None Include="DXUT\Optional\directx.ico">
@@ -168,6 +171,9 @@
     <ClCompile Include="SkinnedData.cpp">
       <Filter>Application\Model</Filter>
     </ClCompile>
+    <ClCompile Include="PostProcessRT.cpp">
+      <Filter>Application\PostProcessRT</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="App.h">
@@ -193,6 +199,9 @@
     </ClInclude>
     <ClInclude Include="SkinnedData.h">
       <Filter>Application\Model</Filter>
+    </ClInclude>
+    <ClInclude Include="PostProcessRT.h">
+      <Filter>Application\PostProcessRT</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
