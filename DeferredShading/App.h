@@ -101,10 +101,13 @@ private:
 		float innerAngleDeg );
 
 private:
-	Model *mModel;
-	SkinnedData *mAnimatedModel;
-	XMFLOAT4X4 mBthWorld[2];
+	Model *mBth;
+	XMFLOAT4X4 mBthWorld;
 	ID3D11ShaderResourceView *mBthColor;
+
+	Model *mLevel;
+	XMFLOAT4X4 mLevelWorld;
+	ID3D11ShaderResourceView *mLevelSRV[3];
 
 	Model *mSphereModel;
 	XMFLOAT4X4 mSphereWorld;
@@ -115,10 +118,8 @@ private:
 
 	ID3D11ShaderResourceView *mProjPointLightColor;
 	ID3D11ShaderResourceView *mProjSpotlightColor;
-
-	ID3D11Buffer *mFloorVB;
-	XMFLOAT4X4 mFloorWorld;
-	ID3D11ShaderResourceView *mFloorTex;
+	
+	SkinnedData *mAnimatedModel;
 
 	Camera mCamera;
 

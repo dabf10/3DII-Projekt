@@ -12,8 +12,6 @@
 App::App() :
 	mInputLayout( 0 ),
 	mTxtHelper( 0 ),
-	mFloorVB( 0 ),
-	mFloorTex( 0 ),
 	mLightRT( 0 ),
 	mLightSRV( 0 ),
 	mMainDepthDSV( 0 ),
@@ -74,12 +72,28 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( mD3DSettingsDlg.OnD3D11CreateDevice( pd3dDevice ) );
 	mTxtHelper = new CDXUTTextHelper( pd3dDevice, DXUTGetD3D11DeviceContext(), &mDialogResourceManager, 15 );
 	
-	mModel = new Model();
-	if (!mModel->LoadOBJ( "bth.obj", true, pd3dDevice ))
+	mBth = new Model();
+	if (!mBth->LoadOBJ( "bth.obj", true, pd3dDevice ))
 		return E_FAIL;
 
 	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
 		return E_FAIL;
+
+	mLevel = new Model();
+	if (!mLevel->LoadOBJ( "Map.obj", true, pd3dDevice ) )
+		return E_FAIL;
+
+	char *textures[] =
+	{
+		"MahoganyBoards-ColorMap.png", // MahoganyBoards-NormalMap.png
+		"ft_stone01_c.png", // ft_stone01_n.png
+		"CedarBoards-ColorMap.png" // CedarBoards-NormalMap.png
+	};
+	for (int i = 0; i < 3; ++i)
+	{
+		if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, textures[i], 0, 0, &mLevelSRV[i], 0 ) ) )
+			return E_FAIL;
+	}
 	
 	mAnimatedModel = new SkinnedData();
 	mAnimatedModel->LoadAnimation("Flamingo_Final_1.GNOME");
@@ -102,35 +116,6 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	if (!BuildFX(pd3dDevice)) return E_FAIL;
 	if (!BuildVertexLayout(pd3dDevice)) return E_FAIL;
-
-	//
-	// Floor geometry
-	//
-
-	D3D11_BUFFER_DESC vbDesc;
-	vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	vbDesc.ByteWidth = 6 * 32; // 6 vertices á 32 byte (Pos: 12, Normal: 12, Tex: 8)
-	vbDesc.CPUAccessFlags = 0;
-	vbDesc.MiscFlags = 0;
-	vbDesc.StructureByteStride = 32;
-	vbDesc.Usage = D3D11_USAGE_IMMUTABLE;
-
-	OBJLoader::Vertex verts[] = 
-	{
-		{ XMFLOAT3(-30, 0, 30), XMFLOAT2(0, 0), XMFLOAT3(0, 1, 0) },
-		{ XMFLOAT3(30, 0, 30), XMFLOAT2(1, 0), XMFLOAT3(0, 1, 0) },
-		{ XMFLOAT3(30, 0, -30), XMFLOAT2(1, 1), XMFLOAT3(0, 1, 0) },
-
-		{ XMFLOAT3(-30, 0, 30), XMFLOAT2(0, 0), XMFLOAT3(0, 1, 0) },
-		{ XMFLOAT3(30, 0, -30), XMFLOAT2(1, 1), XMFLOAT3(0, 1, 0) },
-		{ XMFLOAT3(-30, 0, -30), XMFLOAT2(0, 1), XMFLOAT3(0, 1, 0) },
-	};
-
-	D3D11_SUBRESOURCE_DATA vinit;
-	vinit.pSysMem = verts;
-	V_RETURN( pd3dDevice->CreateBuffer( &vbDesc, &vinit, &mFloorVB ) );
-	// Load floor texture
-	V_RETURN( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "floor.jpg", 0, 0, &mFloorTex, 0 ) );
 
 	// No depth test
 	D3D11_DEPTH_STENCIL_DESC dsDesc = D3D11_DEPTH_STENCIL_DESC( );
@@ -182,20 +167,22 @@ void App::OnD3D11DestroyDevice( )
 	DXUTGetGlobalResourceCache().OnDestroyDevice();
 	SAFE_DELETE( mTxtHelper );
 
-	SAFE_DELETE(mModel);
+	SAFE_DELETE(mBth);
+	SAFE_DELETE(mLevel);
 	SAFE_DELETE(mSphereModel);
 	SAFE_DELETE(mConeModel);
 
 	SAFE_RELEASE( mBthColor );
 	SAFE_RELEASE( mSphereSRV );
+	for (int i = 0; i < 3; ++i)
+	{
+		SAFE_RELEASE( mLevelSRV[i] );
+	}
 
 	SAFE_RELEASE( mProjPointLightColor );
 	SAFE_RELEASE( mProjSpotlightColor );
 	
 	SAFE_RELEASE( mInputLayout );
-
-	SAFE_RELEASE( mFloorVB );
-	SAFE_RELEASE( mFloorTex );
 
 	SAFE_RELEASE( mFullscreenTextureFX );
 
@@ -315,20 +302,17 @@ bool App::Init( )
 	mLastMousePos.x = 0;
 	mLastMousePos.y = 0;
 
-	mCamera.LookAt(XMFLOAT3( 20.0f, 20.0f, -30.0f ), XMFLOAT3( 0, 0, 0 ), XMFLOAT3( 0, 1, 0 ) );
+	mCamera.LookAt(XMFLOAT3( 0.0f, 5.0f, 13.0f ), XMFLOAT3( 0, 0, 100 ), XMFLOAT3( 0, 1, 0 ) );
 	mCamera.UpdateViewMatrix();
 	
-	float uniformScaleFactor = 0.2f;
+	float uniformScaleFactor = 0.12f;
 	XMMATRIX scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
 	XMMATRIX rotation = XMMatrixRotationY(XMConvertToRadians(0));
-	XMMATRIX translation = XMMatrixTranslation(0.0f, 10.0f, -10.0f);
+	XMMATRIX translation = XMMatrixTranslation(0, 8.2, 76.5);
 	XMMATRIX world = scale * rotation * translation;
-	XMStoreFloat4x4(&mBthWorld[0], world);
-	translation = XMMatrixTranslation( 0.0f, 10.0f, 10.0f );
-	world = scale * rotation * translation;
-	XMStoreFloat4x4(&mBthWorld[1], world);
+	XMStoreFloat4x4(&mBthWorld, world);
 
-	uniformScaleFactor = 5;
+	uniformScaleFactor = 3;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
 	translation = XMMatrixTranslation(15, 10, 0);
 	world = scale * rotation * translation;
@@ -345,13 +329,12 @@ bool App::Init( )
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mConeWorld, world);
 
-	XMStoreFloat4x4( &mFloorWorld, XMMatrixIdentity() );
-
-	uniformScaleFactor = 0.01f;
+	uniformScaleFactor = 0.03f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
 	rotation = XMMatrixRotationX(XMConvertToRadians(0));
-	translation = XMMatrixTranslation(0, 20, 20);
+	translation = XMMatrixTranslation(0, 0, 0);
 	world = scale * rotation * translation;
+	XMStoreFloat4x4( &mLevelWorld, world );
 
 	//load modelX
 	gnomeImporter importer = gnomeImporter();
@@ -426,52 +409,75 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	{
 		pd3dImmediateContext->IASetInputLayout( mInputLayout );
 
-		//
-		// Loop through two BTH logos
-		//
-		for (int logo = 0; logo < 2; ++logo)
-		{
-			XMMATRIX world = XMLoadFloat4x4(&mBthWorld[logo]);
-			XMMATRIX worldView = world * mCamera.View();
-			XMMATRIX wvp = world * mCamera.ViewProj();
-			XMMATRIX worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
-
-			// Set object specific constants.
-			mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-			mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-			mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mBthColor);
-			mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-			mModel->Render( pd3dImmediateContext );
-		}
+		XMMATRIX world, worldView, wvp, worldViewInvTrp;
 
 		//
-		// Floor
+		// BTH logo
 		//
+		world = XMLoadFloat4x4(&mBthWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
-		XMMATRIX world = XMLoadFloat4x4( &mFloorWorld );
-		XMMATRIX worldView = world * mCamera.View();
-		XMMATRIX wvp = world * mCamera.ViewProj();
-		XMMATRIX worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
-
-		// Set per object constants.
+		// Set object specific constants.
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFloorTex);
-
-		UINT strides = 32;
-		UINT offsets = 0;
-		pd3dImmediateContext->IASetVertexBuffers( 0, 1, &mFloorVB, &strides, &offsets );
-
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mBthColor);
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		pd3dImmediateContext->Draw( 6, 0 );
+		mBth->Render( pd3dImmediateContext );
+		
+		//
+		// Level
+		//
 
-		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		world = XMLoadFloat4x4(&mLevelWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+
+		// Set object specific constants.
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+
+		for (UINT i = 0; i < mLevel->Batches(); ++i)
+		{
+			mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mLevelSRV[i]);
+			mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+			mLevel->RenderBatch( pd3dImmediateContext, i );
+		}
 
 		//
 		// Sphere model
 		//
+
+		// Direction for moving sphere (rotates)
+		XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(fTime), 0.0f, cosf(fTime), 0.0f));
+		float circleRadius = 19.3f;
+
+		float power = 6;
+		float powerRcp = 1 / power;
+		float x = XMVectorGetX(sphDir);
+		float xSign = x / abs(x);
+		float xPowered = powf( abs(x), power );
+		float z = XMVectorGetZ(sphDir);
+		float zSign = z / abs(z);
+		float zPowered = powf( abs(z), power );
+
+		// Calculate point on superellipse
+		float aPowered = powf( 1, power );
+		float bPowered = powf( 1, power );
+		float xR = powf( xPowered / (xPowered / aPowered + zPowered / bPowered), powerRcp );
+		float yR = powf( zPowered / (zPowered / aPowered + xPowered / bPowered), powerRcp );
+
+		// Scale by circle radius to get world position. Also multiply by the
+		// original sign of the respective components to compensate for removed signs.
+		XMFLOAT3 pos = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
 		
 		world = XMLoadFloat4x4(&mSphereWorld);
+		world._41 = pos.x;
+		world._42 = pos.y;
+		world._43 = pos.z;
+
 		worldView = world * mCamera.View();
 		wvp = world * mCamera.ViewProj();
 		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
@@ -487,17 +493,17 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// Cone model
 		//
 
-		world = XMLoadFloat4x4(&mConeWorld);
-		worldView = world * mCamera.View();
-		wvp = world * mCamera.ViewProj();
-		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		//world = XMLoadFloat4x4(&mConeWorld);
+		//worldView = world * mCamera.View();
+		//wvp = world * mCamera.ViewProj();
+		//worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 
-		// Set object specific constants.
-		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
-		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		mConeModel->Render( pd3dImmediateContext );
+		//// Set object specific constants.
+		//mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		//mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		//mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
+		//mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		//mConeModel->Render( pd3dImmediateContext );
 	}
 
 	//
@@ -1271,22 +1277,32 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
 	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
 
-	float lightRadiusFirstSet = 12.0f;
-	float lightRadiusSecondSet = 20.0f;
+	float lightRadiusFirstSet = 6.0f;
 	float lightIntensityFirstSet = 2.0f;
-	float lightIntensitySecondSet = 1.0f;
 
 	for (UINT i = 0; i < 10; ++i)
 	{
-		XMFLOAT3 position = XMFLOAT3(sinf(i * XM_2PI / 10 + fTime), 0.3f, cosf(i * XM_2PI / 10 + fTime));
-		XMFLOAT3 pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
+		XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
+		float circleRadius = 19.3f;
+
+		float power = 6;
+		float powerRcp = 1 / power;
+		float x = XMVectorGetX(sphDir);
+		float xSign = x / abs(x);
+		float xPowered = powf( abs(x), power );
+		float z = XMVectorGetZ(sphDir);
+		float zSign = z / abs(z);
+		float zPowered = powf( abs(z), power );
+
+		// Calculate point on superellipse
+		float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
+		float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
+
+		// Scale by circle radius to get world position. Also multiply by the
+		// original sign of the respective components to compensate for removed signs.
+		XMFLOAT3 pos = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
 
 		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
-
-		position = XMFLOAT3(cosf(i * XM_2PI / 10 + fTime), -0.6f, sinf(i * XM_2PI / 10 + fTime));
-		pos = XMFLOAT3(position.x * 20, position.y * 20, position.z * 20);
-
-		//RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusSecondSet, lightIntensitySecondSet );
 	}
 
 	// Unbind the G-Buffer textures
@@ -1303,13 +1319,14 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->RSSetState(mCullFront);
 	
 	XMFLOAT3 color(0.0f, 1.0f, 0.0f);
-	XMFLOAT3 position(0.0f, 10.0f, 0.0f);
+	XMFLOAT3 position(0.0f, 10.0f, 40.0f);
 	XMFLOAT3 direction(0.0f, 0.0f, 1.0f);
 	float range = 15.0f;
 	float outerAngleDeg = 20.0f; // Angle from center outwards.
 	float innerAngleDeg = 10.0f;
 
 	direction.x = sinf(static_cast<float>( fTime ));
+	direction.y = -1;
 	direction.z = cosf(static_cast<float>( fTime ));
 	
 	// Set shader variables common for every spotlight
@@ -1340,10 +1357,10 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
 	
 	// Render capsule lights
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(0, 0.5f, 0),
-		XMFLOAT3( 0, 0, 1 ), 1.0f, 8.0f );
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 1.0f, 0.0f), XMFLOAT3(0, 0.5f, 0),
-		XMFLOAT3( -direction.x, direction.y, direction.z ), 2.0f, 8.0f );
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
 
 	// Unbind the G-Buffer textures
 	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1365,7 +1382,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
 	mProjPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
-	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 0, 10.0f, 0 ), 20.0f, 1.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 1.0f, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1380,7 +1397,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
 	pd3dImmediateContext->RSSetState(mCullFront);
 
-	position = XMFLOAT3(0,5,0);
+	position = XMFLOAT3( 45, 5, 0);
 	direction.y = -1.0f;
 	
 	// Set shader variables common for every projective spotlight

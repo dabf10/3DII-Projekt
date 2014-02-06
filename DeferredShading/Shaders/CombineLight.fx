@@ -57,7 +57,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// man bara läser in ljus från lightmap som rgb (inget spec i a) som man
 	// multiplicerar med gbufferns färg rakt av. Ljusshaders kommer behöva anpassas
 	// så de returnerar float3
-	return float4((diffuseColor * diffuseLight + specularLight), 1);
+	return float4((diffuseColor * (diffuseLight + float3(0.05f, 0.05f, 0.05f)) + specularLight), 1);
 	//return float4((diffuseColor * diffuseLight * specularLight), 1); // Intressant effekt :)
 }
 
