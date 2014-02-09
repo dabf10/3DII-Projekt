@@ -52,7 +52,8 @@ PS_OUT PS( VS_OUT input )
 	PS_OUT output = (PS_OUT)0;
 
 	float4 diffuse = gDiffuseMap.Sample( gTriLinearSam, input.TexC );
-	output.Color = diffuse;
+	float gamma = 2.2f;
+	output.Color.rgb = pow( abs(diffuse.rgb), gamma );
 	output.Color.a = gSpecularIntensity;
 
 	// Transform normal from [-1,1] to [0,1] because RT store in [0,1] domain.

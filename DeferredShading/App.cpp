@@ -75,7 +75,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mBth = new Model();
 	if (!mBth->LoadOBJ( "bth.obj", true, pd3dDevice ))
 		return E_FAIL;
-
+	
 	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
 		return E_FAIL;
 
@@ -224,7 +224,7 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
                                           const DXGI_SURFACE_DESC* pBackBufferSurfaceDesc )
 {
 	mBackBufferSurfaceDesc = pBackBufferSurfaceDesc;
-
+	
 	HRESULT hr;
 	V_RETURN( mDialogResourceManager.OnD3D11ResizedSwapChain( pd3dDevice, pBackBufferSurfaceDesc ) );
 	V_RETURN( mD3DSettingsDlg.OnD3D11ResizedSwapChain( pd3dDevice, pBackBufferSurfaceDesc ) );
@@ -410,7 +410,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		pd3dImmediateContext->IASetInputLayout( mInputLayout );
 
 		XMMATRIX world, worldView, wvp, worldViewInvTrp;
-
+		
 		//
 		// BTH logo
 		//
@@ -538,6 +538,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
+		mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource(mSSAO->AOMap());
 
 		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		pd3dImmediateContext->Draw( 3, 0 );
@@ -545,6 +546,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// Unbind shader resources
 		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
 		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
+		mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
 		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	}
 

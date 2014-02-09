@@ -6,15 +6,9 @@
 
 Texture2D gColorMap;
 Texture2D gLightMap;
+Texture2D gAOMap;
 
-SamplerState gColorSampler
-{
-	Filter = MIN_MAG_MIP_LINEAR;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gLightSampler
+SamplerState gSamLinear
 {
 	Filter = MIN_MAG_MIP_LINEAR;
 	AddressU = CLAMP;
@@ -42,12 +36,18 @@ VS_OUT VS( uint VertexID : SV_VertexID )
 
 float4 PS( VS_OUT input ) : SV_TARGET
 {
-	float3 diffuseColor = gColorMap.Sample( gColorSampler, input.TexC ).rgb;
+	float3 diffuseColor = gColorMap.Load( uint3( input.PosH.xy, 0 ) ).rgb;
 
-	float4 light = gLightMap.Sample( gLightSampler, input.TexC );
+	float4 light = gLightMap.Load( uint3( input.PosH.xy, 0 ) );
 
 	float3 diffuseLight = light.rgb;
 	float specularLight = light.a;
+
+	float ao = gAOMap.Sample( gSamLinear, input.TexC ).r;
+
+	float ambient = 0.3f;
+	float3 ambientLight = float3( ambient, ambient, ambient );
+	float3 finalColor = diffuseColor * (diffuseLight + ambientLight) + specularLight;
 
 	// TODO: Det verkar som att man borde kunna låta ljusshaders returnera
 	// (diffus som vanligt) + specularLight * lightcolor. Då returneras EN färg
@@ -57,7 +57,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// man bara läser in ljus från lightmap som rgb (inget spec i a) som man
 	// multiplicerar med gbufferns färg rakt av. Ljusshaders kommer behöva anpassas
 	// så de returnerar float3
-	return float4((diffuseColor * (diffuseLight + float3(0.05f, 0.05f, 0.05f)) + specularLight), 1);
+	return float4( ao * finalColor, 1 );
 	//return float4((diffuseColor * diffuseLight * specularLight), 1); // Intressant effekt :)
 }
 

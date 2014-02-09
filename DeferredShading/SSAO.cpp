@@ -79,20 +79,12 @@ void SSAO::CalculateSSAO( ID3D11ShaderResourceView *depthMap, ID3D11ShaderResour
 	pd3dImmediateContext->ClearRenderTargetView( mAOMapRT, clearColor );
 	pd3dImmediateContext->RSSetViewports( 1, &mViewport );
 
-	// Projection constants based on camera near and far clip planes.
-	// projA = zf / (zf - zn)
-	// projB = -zn * zf / (zf - zn)
-	float projA = proj._33;
-	float projB = proj._43;
-
 	// Set variabled required by the SSAO shader.
 	mSSAOFX->GetVariableByName("gRandomNormals")->AsShaderResource()->SetResource( mRandomNormalsSRV );
 	mSSAOFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( depthMap );
 	mSSAOFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( normalMap );
 	mSSAOFX->GetVariableByName("gProjection")->AsMatrix()->SetMatrix( (float*)&proj );
 	mSSAOFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse(&XMMatrixDeterminant(proj), proj) );
-	mSSAOFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
-	mSSAOFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 	mSSAOFX->GetVariableByName("gOffset")->AsScalar()->SetFloat( mOffset );
 	mSSAOFX->GetVariableByName("gAOStart")->AsScalar()->SetFloat( mAOStart );
 	mSSAOFX->GetVariableByName("gHemisphereRadius")->AsScalar()->SetFloat( mHemisphereRadius );

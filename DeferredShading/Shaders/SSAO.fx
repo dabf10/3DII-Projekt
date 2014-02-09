@@ -2,13 +2,6 @@ Texture2D gNormalMap;
 Texture2D gDepthMap;
 Texture2D gRandomNormals;
 
-SamplerState gNormalSampler
-{
-	Filter = MIN_MAG_MIP_LINEAR;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
 SamplerState gDepthSampler
 {
 	Filter = MIN_MAG_MIP_POINT;
@@ -25,8 +18,6 @@ SamplerState gRandomNormalSampler
 
 float4x4 gProjection;
 float4x4 gInvProj;
-float gProjA;
-float gProjB;
 float gAOStart;
 float gHemisphereRadius;
 float gOffset; // Used to alter texture coordinates when sampling random normals.
@@ -81,12 +72,11 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Early exit if max depth, this can probably be removed if using a skymap.
 	clip( depth == 1.0f ? -1 : 1 );
 
-	float linearDepth = gProjB / (depth - gProjA);
+	float linearDepth = gProjection[3][2] / (depth - gProjection[2][2]);
 	float3 posVS = input.ViewRay * linearDepth;
 
-	// TODO: Normalize?
 	// Get the view space normal and transform into [-1,1] range
-	float3 normalVS = gNormalMap.Sample( gNormalSampler, input.TexC ).xyz * 2.0f - 1.0f;
+	float3 normalVS = normalize( gNormalMap.Load( uint3( 2 * input.PosH.xy, 0 ) ).xyz * 2.0f - 1.0f);
 
 	// Grab a normal for reflecting the sample rays later on. There are fixed
 	// vectors that are always the same (one for each sample). These vectors
@@ -144,7 +134,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 
 		// Get the depth of the occluder fragment and use it to find it's position.
 		float occluderDepth = gDepthMap.Sample( gDepthSampler, occluderTexC ).r;
-		float linearOccluderDepth = gProjB / (occluderDepth - gProjA);
+		float linearOccluderDepth = gProjection[3][2] / (occluderDepth - gProjection[2][2]);
 		float3 occluderPos = occluderViewRay * linearOccluderDepth;
 
 		float3 directionToOccluder = normalize(occluderPos - posVS);
@@ -158,15 +148,15 @@ float4 PS( VS_OUT input ) : SV_TARGET
 		// a = distance function (smoothstep value could be raised to a power for exponential falloff instead of linear, smoothstep is in [0,1] which means smoothstep^n is in [0,1] as well.
 		float a = 1.0f - smoothstep(gAOStart, gHemisphereRadius, VPdistOP);
 		// b = dot product
-		float b = NdS;
+		float b = NdS; // Angle attenuation (normal and direction to occluder)
 
 		ambientOcclusion += (a * b);
 	}
 
 	// Output the result
 	float ambientAccessibility = 1.0f - ambientOcclusion * gInvSamples;
-
-	return float4(ambientAccessibility, ambientAccessibility, ambientAccessibility, 1.0f);
+	
+	return float4(ambientAccessibility, 0, 0, 0);
 }
 
 technique11 Technique0
