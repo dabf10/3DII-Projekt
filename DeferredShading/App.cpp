@@ -69,8 +69,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	if ( !mModel->LoadOBJ( "bth.obj", false, pd3dDevice, mBthMaterialToUseForGroup, mBthMaterials ) )
 		return E_FAIL;
 
-	mAnimatedModel = new SkinnedData();
-	mAnimatedModel->LoadAnimation("Flamingo_Final_1.GNOME");
+	mFlamingoModel = new SkinnedData();
+	mFlamingoModel->LoadAnimation("Flamingo_Final_1.GNOME");
 
 	// Loop through every material (group) and load it's diffuse texture.
 	for (UINT i = 0; i < mBthMaterials.size(); ++i)
@@ -507,6 +507,15 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mConeModel->Render( pd3dImmediateContext );
+
+		//
+		// Animated Flamingo
+		//
+		world = XMLoadFloat4x4(&mFlamingoWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+
 	}
 
 	//

@@ -103,7 +103,6 @@ private:
 
 private:
 	Model *mModel;
-	SkinnedData *mAnimatedModel;
 	XMFLOAT4X4 mBthWorld[2];
 	std::vector<UINT> mBthMaterialToUseForGroup;
 	std::vector<OBJLoader::SurfaceMaterial> mBthMaterials;
@@ -123,6 +122,9 @@ private:
 	ID3D11Buffer *mFloorVB;
 	ID3D11ShaderResourceView *mFloorTex;
 	XMFLOAT4X4 mFloorWorld;
+
+	SkinnedData *mFlamingoModel;
+	XMFLOAT4X4 mFlamingoWorld;
 
 	Camera mCamera;
 

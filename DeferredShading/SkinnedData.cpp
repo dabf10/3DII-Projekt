@@ -222,7 +222,7 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 	unsigned int mapSize = 0;
 	memcpy_s(&mapSize, uintSize, pos, uintSize);
 	pos += uintSize;
-	bytesread = uintSize;	// = on purpose to reset.
+	bytesread += uintSize;	// = on purpose to reset.
 
 	std::string* clipNames = new std::string[mapSize];
 	AnimationClip* clips = new AnimationClip[mapSize];
