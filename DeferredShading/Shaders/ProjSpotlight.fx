@@ -76,7 +76,8 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularPower = normalData.a * 255;
 
 	// Get specular intensity from gColorMap
-	float specularIntensity = gColorMap.Load( uint3( input.PosH.xy, 0 ) ).a;
+	float4 color = gColorMap.Load( uint3( input.PosH.xy, 0 ) );
+	float specularIntensity = color.a;
 	
 	// Clamp view ray to the plane at Z = 1
 	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
@@ -115,10 +116,13 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 directionToCamera = normalize(-posVS);
 
 	// Specular light
-	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
-		directionToCamera)), specularPower);
+	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float y = specularPower;
+	float specularLight = specularIntensity * pow(x, y);
 	
-	return distAtt * coneAtt * float4(diffuseLight.rgb, specularLight);
+	// Take attenuation and light intensity into account
+	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	return float4( distAtt * coneAtt * color.rgb * (diffuseLight + ambientLight) + distAtt * coneAtt * specularLight, 1 );
 }
 
 technique11 Technique0

@@ -100,6 +100,8 @@ private:
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
 
+	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext );
+
 private:
 	Model *mBth;
 	XMFLOAT4X4 mBthWorld;
@@ -134,8 +136,12 @@ private:
 	CDXUTTextHelper *mTxtHelper;
 
 	// Accumulates lights
-	ID3D11RenderTargetView *mLightRT;
-	ID3D11ShaderResourceView *mLightSRV;
+	ID3D11RenderTargetView *mHDRRT;
+	ID3D11ShaderResourceView *mHDRSRV;
+	ID3D11UnorderedAccessView *mIntermediateLuminanceUAV;
+	ID3D11ShaderResourceView *mIntermediateLuminanceSRV;
+	ID3D11UnorderedAccessView *mAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mAverageLuminanceSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
@@ -160,6 +166,9 @@ private:
 
 	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
+
+	ID3DX11Effect *mAverageLuminanceFX;
+	ID3DX11Effect *mHDRToneMapFX;
 
 	ID3D11DepthStencilState *mNoDepthTest;
 	ID3D11DepthStencilState *mDepthGreaterEqual;

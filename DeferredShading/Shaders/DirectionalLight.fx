@@ -72,7 +72,9 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularPower = normalData.a * 255;
 
 	// Get specular intensity from gColorMap.
-	float specularIntensity = gColorMap.Sample( gColorSampler, input.TexC ).a;
+	float4 color = gColorMap.Sample( gColorSampler, input.TexC );
+	float specularIntensity = color.a;
+	//float specularIntensity = gColorMap.Sample( gColorSampler, input.TexC ).a;
 
 	// For specular lighting, we need to have the vector from the camera to the
 	// point being shaded, alas, we need the position. Right now we have the
@@ -105,11 +107,14 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 directionToCamera = normalize(-posVS.xyz);
 
 	// Compute specular light
-	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
-		directionToCamera)), specularPower);
+	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float y = specularPower;
+	float specularLight = specularIntensity * pow(x, y);
 
-	// Output the two lights
-	return float4(diffuseLight.rgb, specularLight);
+	// ------------------------------------------
+
+	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	return float4( color.rgb * (diffuseLight + ambientLight) + specularLight, 1 );
 }
 
 technique11 Technique0

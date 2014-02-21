@@ -12,8 +12,12 @@
 App::App() :
 	mInputLayout( 0 ),
 	mTxtHelper( 0 ),
-	mLightRT( 0 ),
-	mLightSRV( 0 ),
+	mHDRRT( 0 ),
+	mHDRSRV( 0 ),
+	mIntermediateLuminanceUAV( 0 ),
+	mIntermediateLuminanceSRV( 0 ),
+	mAverageLuminanceUAV( 0 ),
+	mAverageLuminanceSRV( 0 ),
 	mMainDepthDSV( 0 ),
 	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
@@ -35,6 +39,8 @@ App::App() :
 	mProjSpotlightColor( 0 ),
 	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
+	mAverageLuminanceFX( 0 ),
+	mHDRToneMapFX( 0 ),
 	mNoDepthTest( 0 ),
 	mDepthGreaterEqual( 0 ),
 	mAdditiveBlend( 0 ),
@@ -198,6 +204,9 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
 
+	SAFE_RELEASE( mAverageLuminanceFX );
+	SAFE_RELEASE( mHDRToneMapFX );
+
 	SAFE_RELEASE( mNoDepthTest );
 	SAFE_RELEASE( mDepthGreaterEqual );
 	SAFE_RELEASE( mAdditiveBlend );
@@ -254,8 +263,12 @@ void App::OnD3D11ReleasingSwapChain( )
 {
 	mDialogResourceManager.OnD3D11ReleasingSwapChain();
 	
-	SAFE_RELEASE( mLightRT );
-	SAFE_RELEASE( mLightSRV );
+	SAFE_RELEASE( mHDRRT );
+	SAFE_RELEASE( mHDRSRV );
+	SAFE_RELEASE( mIntermediateLuminanceUAV );
+	SAFE_RELEASE( mIntermediateLuminanceSRV );
+	SAFE_RELEASE( mAverageLuminanceUAV );
+	SAFE_RELEASE( mAverageLuminanceSRV );
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
@@ -510,12 +523,33 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// Render lights
 	//
 
+	// TODO: Jag renderar ljus till hdr just nu. Det som ska göras sen är att
+	// ljusshaders direkt kombinerar med färgdata från gbuffer. Egentligen vill vi
+	// kanske låta ssao göras först, så vi kan kombinera med det med en gång också.
 	RenderLights( pd3dImmediateContext, fTime );
+
+	// Tone mapping är vad som drar ner hdr till ldr men försöker bevara detaljer.
+	// Här måste man beräkna genomsnittlig luminance för scenen (max för nutty), 
+	// vilket görs genom downscale till 1x1. Det vet jag inte hur man gör på ett
+	// vettigt sätt.
+	// Jag tror för övrigt att tone mapping är något som görs på samma render target.
+	// Alltså kommer HDR texturen bli LDR som sedan visas.
+	ToneMap( pd3dImmediateContext );
 
 	//
 	// SSAO
 	//
 
+	// TODO:
+	// TODO: Use AO when rendering lights :) (Right now this would mean that it's
+	// good to do it using pixel shaders, since we are rendering lights normally.
+	// If tile-based deferred shading turns out all right the lights are "rendered"
+	// using compute shaders, which means that AO can be calculated using CS too :)
+	// It doesn't matter if it's PS or CS really, because the only thing that's
+	// happening is switching to compute mode a little earlier, but there's no
+	// switching from PS to CS and back to PS and back to CS or something.)
+	// TODO:
+	// TODO:
 	// Because SSAO changes viewport (normally only renders to a quarter size of backbuffer)
 	// we need to reset the viewport after.
 	D3D11_VIEWPORT fullViewport;
@@ -527,28 +561,32 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
 
+
+
+	// TODO: Combination sker inte här. Det görs när ljus renderas (ingen light accum
+	// buffer, utan allt kombineras dirr till HDR)
 	//
 	// Render a full-screen quad that combines the light from the light map
 	// with the color map from the G-Buffer
 	//
-	{
-		mPostProcessRT->Flip();
-		ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV();
-		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
+	//{
+	//	mPostProcessRT->Flip();
+	//	ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV();
+	//	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
-		mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource(mSSAO->AOMap());
+	//	mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	//	mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
+	//	mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource(mSSAO->AOMap());
 
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		pd3dImmediateContext->Draw( 3, 0 );
+	//	mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//	pd3dImmediateContext->Draw( 3, 0 );
 
-		// Unbind shader resources
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	}
+	//	// Unbind shader resources
+	//	mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	//	mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
+	//	mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
+	//	mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	//}
 
 	//
 	// Generate an old-film looking effect
@@ -616,9 +654,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// 4 smaller in quadrants. Simply select what resource views to use
 		// and how many of those to draw.
 		ID3D11ShaderResourceView *srvs[4] = {
-			mSSAO->AOMap(),
+			mHDRSRV,
 			mGBuffer->NormalSRV(),
-			mLightSRV,
+			mSSAO->AOMap(),
 			mGBuffer->ColorSRV()
 		};
 
@@ -671,6 +709,77 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	mHUD.OnRender( fElapsedTime );
 	RenderText();
+}
+
+	//Res: back buffer width and height divided by 4
+	//Domain: back buffer width * height divided by 16 (eller Res.x * Res.y)
+	//GroupSize: width * height / (16 * 1024) eller (UINT)ceil((float)(width*height/16)/1024.0f)
+	// Sätt HDR SRV och intermediateluminanceuav
+	// Dispatcha första shadern med group count i x på <total back buffer pixels> / (16 * 1024) (GroupSize som sattes innan). Glöm ej 1 på y och z
+	// Efter första shadern körs andra shadern med samma constant buffer, fast med intermediate luminance srv och average luminance uav. (dispatcha en grupp (1,1,1))
+	// Nu är average luminance beräknat, och kan användas för att slutföra tone mapping.
+	// Nu renderas en full screen quad som returnerar LDR värden. Sätt LDR RTV som
+	// användes för light accumulation (kan man inte göra om hdr till ldr?). Sätt även
+	// hdr och average luminance srvs. Rendera sedan full screen triangle.
+	// Annat: Med shared memory kan en trådgrupp downscala många pixlar till en pixel.
+	// Med hela HDR texturen kan inte downscalas på en gång pga av begränsningar i DX11:
+	// 1) Varje trådgrupp begränsad till 1024 eller färre trådar. 2) Shared memory är
+	// begränsat till 16Kb. 3) Varje tråd kan bara skriva till 256 bytes av delat minne.
+	// Downscalar 16 pixlar per tråd, med 1024 trådar per grupp (max möjliga).
+	// Första compute shadern downscalar HDR till 1/16 storlek.
+void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext )
+{
+	ID3D11RenderTargetView *rt[1] = { NULL };
+	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL ); // testa 0, 0, 0?
+
+	// Common constants
+	int res[2] = { mBackBufferSurfaceDesc->Width / 4, mBackBufferSurfaceDesc->Height / 4 };
+	UINT threadGroups = (UINT)ceil((float)(mBackBufferSurfaceDesc->Width * mBackBufferSurfaceDesc->Height / 16.0f) / 1024.0f);
+	mAverageLuminanceFX->GetVariableByName("Res")->AsVector()->SetIntVector(res);
+	mAverageLuminanceFX->GetVariableByName("Domain")->AsScalar()->SetInt(res[0] * res[1]);
+	mAverageLuminanceFX->GetVariableByName("GroupSize")->AsScalar()->SetInt(threadGroups);
+	
+	// First pass downsamples to a small 1D array.
+	mAverageLuminanceFX->GetVariableByName("HDRTex")->AsShaderResource()->SetResource(mHDRSRV);
+	mAverageLuminanceFX->GetVariableByName("AverageLum")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateLuminanceUAV);
+
+	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( threadGroups, 1, 1 );
+
+	mAverageLuminanceFX->GetVariableByName("HDRTex")->AsShaderResource()->SetResource( 0 );
+	mAverageLuminanceFX->GetVariableByName("AverageLum")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	// Second pass downscales to a single pixel
+	mAverageLuminanceFX->GetVariableByName("AverageValues1D")->AsShaderResource()->SetResource( mIntermediateLuminanceSRV );
+	mAverageLuminanceFX->GetVariableByName("AverageLum")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
+
+	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( 1, 1, 1 );
+
+	mAverageLuminanceFX->GetVariableByName("AverageValues1D")->AsShaderResource()->SetResource( 0 );
+	mAverageLuminanceFX->GetVariableByName("AverageLum")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+
+	// Final pass that does actual tone mapping
+	mPostProcessRT->Flip();
+	rt[0] = mPostProcessRT->GetRTV();
+	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL );
+
+	float middleGrey = 0.863f;
+	float white = 1.53f;
+	mHDRToneMapFX->GetVariableByName("MiddleGrey")->AsScalar()->SetFloat(middleGrey);
+	mHDRToneMapFX->GetVariableByName("LumWhiteSqr")->AsScalar()->SetFloat(white * middleGrey * white * middleGrey);
+
+	mHDRToneMapFX->GetVariableByName("HDRTexture")->AsShaderResource()->SetResource( mHDRSRV );
+	mHDRToneMapFX->GetVariableByName("AvgLum")->AsShaderResource()->SetResource( mAverageLuminanceSRV );
+
+	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Draw( 3, 0 );
+	
+	mHDRToneMapFX->GetVariableByName("HDRTexture")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetVariableByName("AvgLum")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 }
 
 
@@ -826,6 +935,20 @@ bool App::BuildFX(ID3D11Device *device)
 	if (!CompileShader( device, "Shaders/OldFilm.fx", &mOldFilmFX ))
 		return false;
 
+	//
+	// AverageLuminance
+	//
+
+	if (!CompileShader( device, "Shaders/HDRAverageLuminance.fx", &mAverageLuminanceFX ))
+		return false;
+
+	//
+	// HDRToneMap
+	//
+
+	if (!CompileShader( device, "Shaders/HDRToneMapping.fx", &mHDRToneMapFX ))
+		return false;
+
 	return true;
 }
 
@@ -922,48 +1045,111 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	texDesc.SampleDesc.Count = 1;
 	texDesc.SampleDesc.Quality = 0;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
-
+	
 	//
 	// Light (not actually G-Buffer, but used to accumulate light)
 	//
+	//{
+	//	D3D11_TEXTURE2D_DESC lightTexDesc = texDesc;
+	//	lightTexDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	//	V_RETURN( device->CreateTexture2D( &lightTexDesc, 0, &tex) );
+	//	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
+	//	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
+	//
+	//	// Views saves reference
+	//	SAFE_RELEASE( tex );
+	//}
 
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
-	
-	// Views saves reference
-	SAFE_RELEASE( tex );
+	//
+	// HDR render target
+	//
+	{
+		D3D11_TEXTURE2D_DESC hdrTexDesc = texDesc;
+		hdrTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		V_RETURN( device->CreateTexture2D( &hdrTexDesc, 0, &tex ) );
+		V_RETURN( device->CreateRenderTargetView( tex, NULL, &mHDRRT ) );
+		V_RETURN( device->CreateShaderResourceView( tex, NULL, &mHDRSRV ) );
+
+		// Views saves reference
+		SAFE_RELEASE( tex );
+	}
+
+	//
+	// HDR Tone mapping buffers (skips cbuffers for now, effects11 handles that nicely)
+	//
+	{
+		UINT threadGroups = (UINT)ceil((float)(width * height / 16.0f) / 1024.0f);
+
+		// Intermediate luminance
+		D3D11_BUFFER_DESC bufDesc = { 0 };
+		bufDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+		bufDesc.StructureByteStride = 4; // float
+		bufDesc.ByteWidth = 4 * threadGroups;
+		bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		ID3D11Buffer *buf;
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.NumElements = threadGroups;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.Flags = 0;
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateLuminanceUAV ) );
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = threadGroups;
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateLuminanceSRV ) );
+
+		SAFE_RELEASE( buf );
+
+		// Average luminance
+		bufDesc.ByteWidth = 4; // One float, only thing that differs from first is size.
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+
+		uavDesc.Buffer.NumElements = 1;
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mAverageLuminanceUAV ) );
+
+		srvDesc.Buffer.NumElements = 1;
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mAverageLuminanceSRV ) );
+
+		SAFE_RELEASE( buf );
+	}
 
 	//
 	// Depth/stencil buffer and view
 	//
+	{
+		D3D11_TEXTURE2D_DESC dsTexDesc = texDesc;
+		dsTexDesc.Width = mBackBufferSurfaceDesc->Width;
+		dsTexDesc.Height = mBackBufferSurfaceDesc->Height;
+		dsTexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+		dsTexDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		V_RETURN( device->CreateTexture2D( &dsTexDesc, 0, &tex ) );
 
-	texDesc.Width = mBackBufferSurfaceDesc->Width;
-	texDesc.Height = mBackBufferSurfaceDesc->Height;
-	texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-	texDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+		dsvDesc.Flags = 0;
+		dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		dsvDesc.Texture2D.MipSlice = 0;
+		V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
 
-	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
-	dsvDesc.Flags = 0;
-	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-	dsvDesc.Texture2D.MipSlice = 0;
-	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
+		dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+		V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSVReadOnly ) );
 
-	dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
-	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSVReadOnly ) );
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		srvDesc.Texture2D.MipLevels = 1;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mMainDepthSRV ) );
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-	srvDesc.Texture2D.MipLevels = 1;
-	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mMainDepthSRV ) );
-
-	// Views saves reference
-	SAFE_RELEASE( tex );
+		// Views saves reference
+		SAFE_RELEASE( tex );
+	}
 
 
 	return S_OK;
@@ -1215,9 +1401,11 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
 	// Bind the light accumulation buffer as a render target. Using additive blending,
 	// the contribution of every light will be summed and stored in this buffer.
-	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, mMainDepthDSVReadOnly);
+	//pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, mMainDepthDSVReadOnly);
+	pd3dImmediateContext->OMSetRenderTargets( 1, &mHDRRT, mMainDepthDSVReadOnly );
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
+	//pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
+	pd3dImmediateContext->ClearRenderTargetView( mHDRRT, clearColor );
 	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
 	
 	// Common for every light

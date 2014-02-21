@@ -58,7 +58,7 @@ PS_OUT PS( VS_OUT input )
 
 	// Transform normal from [-1,1] to [0,1] because RT store in [0,1] domain.
 	output.Normal.rgb = 0.5f * (normalize(input.NormVS) + 1.0f);
-	output.Normal.a = gSpecularPower;
+	output.Normal.a = gSpecularPower; // Store in [0,1]. It's multiplied by 255 when unpacked
 
 	return output;
 }
