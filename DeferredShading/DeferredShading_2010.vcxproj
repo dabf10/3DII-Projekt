@@ -422,11 +422,10 @@
     <None Include="Shaders\BilateralBlur.fx" />
     <None Include="Shaders\CapsuleLight.fx" />
     <None Include="Shaders\ClearGBuffer.fx" />
-    <None Include="Shaders\CombineLight.fx" />
     <None Include="Shaders\DirectionalLight.fx" />
     <None Include="Shaders\FullscreenTexture.fx" />
     <None Include="Shaders\GBuffer.fx" />
-    <None Include="Shaders\HDRAverageLuminance.fx" />
+    <None Include="Shaders\HDRLuminanceDownscale.fx" />
     <None Include="Shaders\HDRToneMapping.fx" />
     <None Include="Shaders\OldFilm.fx" />
     <None Include="Shaders\PointLight.fx" />
