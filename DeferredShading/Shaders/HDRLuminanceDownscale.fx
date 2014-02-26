@@ -11,6 +11,7 @@ Antal trådgrupper på y och z är 1.
 
 Texture2D gHDRTex : register( t0 );
 RWStructuredBuffer<float> gAverageLumOutput : register( u0 );
+RWStructuredBuffer<float> gMaximumLumOutput : register( u1 );
 
 cbuffer DownScaleConstants : register( b0 )
 {
@@ -21,13 +22,15 @@ cbuffer DownScaleConstants : register( b0 )
 
 // Shared memory to store intermediate results
 groupshared float SharedAverage[1024];
+groupshared float SharedMaximum[1024];
 
 static const float4 LUM_FACTOR = float4(0.299, 0.587, 0.114, 0);
 
 // Initial 4x4 downscale on each thread
-void DownScale4x4( uint2 curPixel, uint groupThreadID, out float avgLum )
+void DownScale4x4( uint2 curPixel, uint groupThreadID, out float avgLum, out float maxLum )
 {
 	avgLum = 0.0;
+	maxLum = 0.0;
 	
 	// Skip out of bounds pixels
 	if (curPixel.y < gDownscaleRes.y)
@@ -47,12 +50,14 @@ void DownScale4x4( uint2 curPixel, uint groupThreadID, out float avgLum )
 				luminance = dot( gHDRTex.Load( fullResPos, int2(j, i) ), LUM_FACTOR );
 				avgLum += log( 1e-3 + luminance );
 				//avgLum += luminance;
+				maxLum = max( maxLum, luminance );
 			}
 		}
 		avgLum /= 16.0;
 		
 		// Write the result to the shared memory
 		SharedAverage[groupThreadID] = avgLum;
+		SharedMaximum[groupThreadID] = maxLum;
 	}
 
 	// Synchronize before next step
@@ -60,7 +65,7 @@ void DownScale4x4( uint2 curPixel, uint groupThreadID, out float avgLum )
 }
 
 // Continues downscale down to four values
-void DownScale1024to4( uint dispatchThreadID, uint groupThreadID, inout float avgLum )
+void DownScale1024to4( uint dispatchThreadID, uint groupThreadID, inout float avgLum, inout float maxLum )
 {
 	// mod is used to work with every 4th of the previous threads.
 	// steps are used to locate where to get sums calculated by previous threads.
@@ -79,9 +84,15 @@ void DownScale1024to4( uint dispatchThreadID, uint groupThreadID, inout float av
 			stepAvgLum += dispatchThreadID + step2 < gDownscaleNumPixels ? SharedAverage[groupThreadID + step2] : avgLum;
 			stepAvgLum += dispatchThreadID + step3 < gDownscaleNumPixels ? SharedAverage[groupThreadID + step3] : avgLum;
 
+			// Get maximum luminance
+			maxLum = max( maxLum, dispatchThreadID + step1 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + step1] : 0.0 );
+			maxLum = max( maxLum, dispatchThreadID + step2 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + step2] : 0.0 );
+			maxLum = max( maxLum, dispatchThreadID + step3 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + step3] : 0.0 );
+
 			// Store the results
 			avgLum = stepAvgLum;
 			SharedAverage[groupThreadID] = stepAvgLum;
+			SharedMaximum[groupThreadID] = maxLum;
 		}
 
 		// Synchronize before next step
@@ -90,7 +101,7 @@ void DownScale1024to4( uint dispatchThreadID, uint groupThreadID, inout float av
 }
 
 // Downscale 4 values to one averaged.
-void DownScale4to1( uint dispatchThreadID, uint groupThreadID, uint groupID, float avgLum )
+void DownScale4to1( uint dispatchThreadID, uint groupThreadID, uint groupID, float avgLum, float maxLum )
 {
 	// The first thread of every group sums up the final value for its group and
 	// divides by number of threads in the group to get average value. This value
@@ -104,8 +115,14 @@ void DownScale4to1( uint dispatchThreadID, uint groupThreadID, uint groupID, flo
 		finalAvgLum += dispatchThreadID + 768 < gDownscaleNumPixels ? SharedAverage[groupThreadID + 768] : avgLum;
 		finalAvgLum /= 1024.0;
 
+		// Get maximum luminance
+		maxLum = max( maxLum, dispatchThreadID + 256 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + 256] : 0.0 );
+		maxLum = max( maxLum, dispatchThreadID + 512 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + 512] : 0.0 );
+		maxLum = max( maxLum, dispatchThreadID + 768 < gDownscaleNumPixels ? SharedMaximum[groupThreadID + 768] : 0.0 );
+
 		// Write the final value into the 1D UAV which will be used in the next step.
 		gAverageLumOutput[groupID] = finalAvgLum;
+		gMaximumLumOutput[groupID] = maxLum;
 	}
 }
 
@@ -114,19 +131,20 @@ void DownScaleFirstPass( uint3 groupID : SV_GroupID, uint3 dispatchThreadID : SV
 						uint3 groupThreadID : SV_GroupThreadID )
 {
 	float avgLum = 0.0;
+	float maxLum = 0.0;
 
 	uint2 curPixel = uint2( dispatchThreadID.x % gDownscaleRes.x, dispatchThreadID.x / gDownscaleRes.x );
 
 	// Every thread reduces a group of 16 pixels to a single pixel and stores in
 	// the shared memory.
-	DownScale4x4( curPixel, groupThreadID.x, avgLum );
+	DownScale4x4( curPixel, groupThreadID.x, avgLum, maxLum );
 
 	// Downscale the 1024 values to 4
-	DownScale1024to4( dispatchThreadID.x, groupThreadID.x, avgLum );
+	DownScale1024to4( dispatchThreadID.x, groupThreadID.x, avgLum, maxLum );
 
 	// The first thread of the group downscales the last 4 average values to a
 	// final average for this thread group.
-	DownScale4to1( dispatchThreadID.x, groupThreadID.x, groupID.x, avgLum );
+	DownScale4to1( dispatchThreadID.x, groupThreadID.x, groupID.x, avgLum, maxLum );
 }
 
 
@@ -143,9 +161,11 @@ void DownScaleFirstPass( uint3 groupID : SV_GroupID, uint3 dispatchThreadID : SV
 #define REDUCTIONS 3
 
 StructuredBuffer<float> gAverageValues1D : register( t0 );
+StructuredBuffer<float> gMaximumValues1D : register( t1 );
 
 // Group shared memory to store the intermediate results
 groupshared float SharedAvgFinal[MAX_GROUPS];
+groupshared float SharedMaxFinal[MAX_GROUPS];
 
 [numthreads(MAX_GROUPS, 1, 1)]
 void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
@@ -153,12 +173,15 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 	// Fill the shared memory with the 1D values from the first pass. Threads
 	// that corresponds to a group that was never executed simply adds 0.
 	float avgLum = 0.0;
+	float maxLum = 0.0;
 	if (dispatchThreadID.x < gGroupCount)
 	{
 		avgLum = gAverageValues1D[dispatchThreadID.x];
+		maxLum = gMaximumValues1D[dispatchThreadID.x];
 	}
 
 	SharedAvgFinal[dispatchThreadID.x] = avgLum;
+	SharedMaxFinal[dispatchThreadID.x] = maxLum;
 
 	GroupMemoryBarrierWithGroupSync();
 
@@ -183,8 +206,14 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 			avgLum += dispatchThreadID.x + step2 < gGroupCount ? SharedAvgFinal[dispatchThreadID.x + step2] : 0.0;
 			avgLum += dispatchThreadID.x + step3 < gGroupCount ? SharedAvgFinal[dispatchThreadID.x + step3] : 0.0;
 
+			// Get maximum luminance
+			maxLum = max( maxLum, dispatchThreadID.x + step1 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step1] : 0.0 );
+			maxLum = max( maxLum, dispatchThreadID.x + step2 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step2] : 0.0 );
+			maxLum = max( maxLum, dispatchThreadID.x + step3 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step3] : 0.0 );
+
 			// Store results
 			SharedAvgFinal[dispatchThreadID.x] = avgLum;
+			SharedMaxFinal[dispatchThreadID.x] = maxLum;
 		}
 
 		// Synchronize before next step
@@ -201,9 +230,15 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 		avgLum += dispatchThreadID.x + step2 < gGroupCount ? SharedAvgFinal[dispatchThreadID.x + step2] : 0.0;
 		avgLum += dispatchThreadID.x + step3 < gGroupCount ? SharedAvgFinal[dispatchThreadID.x + step3] : 0.0;
 
+		// Get maximum luminance
+		maxLum = max( maxLum, dispatchThreadID.x + step1 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step1] : 0.0 );
+		maxLum = max( maxLum, dispatchThreadID.x + step2 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step2] : 0.0 );
+		maxLum = max( maxLum, dispatchThreadID.x + step3 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step3] : 0.0 );
+
 		// Return average/maximum luminance.
 		gAverageLumOutput[0] = exp( max( avgLum / gGroupCount, 0.0001 ) );
 		//gAverageLumOutput[0] = max( avgLum / gGroupCount, 0.0001 );
+		gMaximumLumOutput[0] = maxLum;
 	}
 }
 

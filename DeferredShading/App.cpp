@@ -14,10 +14,14 @@ App::App() :
 	mTxtHelper( 0 ),
 	mHDRRT( 0 ),
 	mHDRSRV( 0 ),
-	mIntermediateLuminanceUAV( 0 ),
-	mIntermediateLuminanceSRV( 0 ),
+	mIntermediateAverageLuminanceUAV( 0 ),
+	mIntermediateAverageLuminanceSRV( 0 ),
+	mIntermediateMaximumLuminanceUAV( 0 ),
+	mIntermediateMaximumLuminanceSRV( 0 ),
 	mAverageLuminanceUAV( 0 ),
 	mAverageLuminanceSRV( 0 ),
+	mMaximumLuminanceUAV( 0 ),
+	mMaximumLuminanceSRV( 0 ),
 	mMainDepthDSV( 0 ),
 	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
@@ -263,10 +267,14 @@ void App::OnD3D11ReleasingSwapChain( )
 	
 	SAFE_RELEASE( mHDRRT );
 	SAFE_RELEASE( mHDRSRV );
-	SAFE_RELEASE( mIntermediateLuminanceUAV );
-	SAFE_RELEASE( mIntermediateLuminanceSRV );
+	SAFE_RELEASE( mIntermediateAverageLuminanceUAV );
+	SAFE_RELEASE( mIntermediateAverageLuminanceSRV );
+	SAFE_RELEASE( mIntermediateMaximumLuminanceUAV );
+	SAFE_RELEASE( mIntermediateMaximumLuminanceSRV );
 	SAFE_RELEASE( mAverageLuminanceUAV );
 	SAFE_RELEASE( mAverageLuminanceSRV );
+	SAFE_RELEASE( mMaximumLuminanceUAV );
+	SAFE_RELEASE( mMaximumLuminanceSRV );
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
@@ -689,24 +697,30 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext )
 	
 	// First pass downsamples to a small 1D array.
 	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource(mHDRSRV);
-	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateLuminanceUAV);
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateAverageLuminanceUAV);
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateMaximumLuminanceUAV);
 
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Dispatch( threadGroups, 1, 1 );
 
 	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource( 0 );
 	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	// Second pass downscales to a single pixel
-	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( mIntermediateLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( mIntermediateAverageLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumValues1D")->AsShaderResource()->SetResource( mIntermediateMaximumLuminanceSRV );
 	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mMaximumLuminanceUAV );
 
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Dispatch( 1, 1, 1 );
 
 	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumValues1D")->AsShaderResource()->SetResource( 0 );
 	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 
 	// Final pass that does actual tone mapping
@@ -717,16 +731,18 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext )
 	float middleGrey = 0.863f;
 	float white = 1.53f;
 	mHDRToneMapFX->GetVariableByName("gMiddleGrey")->AsScalar()->SetFloat(middleGrey);
-	mHDRToneMapFX->GetVariableByName("LumWhiteSqr")->AsScalar()->SetFloat(white * middleGrey * white * middleGrey);
+	mHDRToneMapFX->GetVariableByName("LumWhiteSqr")->AsScalar()->SetFloat(white * white);
 
 	mHDRToneMapFX->GetVariableByName("gHDRTexture")->AsShaderResource()->SetResource( mHDRSRV );
 	mHDRToneMapFX->GetVariableByName("gAvgLum")->AsShaderResource()->SetResource( mAverageLuminanceSRV );
+	mHDRToneMapFX->GetVariableByName("gMaxLum")->AsShaderResource()->SetResource( mMaximumLuminanceSRV );
 
 	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
 	
 	mHDRToneMapFX->GetVariableByName("gHDRTexture")->AsShaderResource()->SetResource( 0 );
 	mHDRToneMapFX->GetVariableByName("gAvgLum")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetVariableByName("gMaxLum")->AsShaderResource()->SetResource( 0 );
 	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 }
 
@@ -1014,7 +1030,6 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 		bufDesc.ByteWidth = 4 * threadGroups;
 		bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		ID3D11Buffer *buf;
-		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
 
 		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
 		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
@@ -1022,27 +1037,40 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 		uavDesc.Buffer.NumElements = threadGroups;
 		uavDesc.Buffer.FirstElement = 0;
 		uavDesc.Buffer.Flags = 0;
-		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateLuminanceUAV ) );
-
+		
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
 		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 		srvDesc.Buffer.FirstElement = 0;
 		srvDesc.Buffer.NumElements = threadGroups;
-		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateLuminanceSRV ) );
 
+		// Intermediate average luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateAverageLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateAverageLuminanceSRV ) );
 		SAFE_RELEASE( buf );
 
-		// Average luminance
-		bufDesc.ByteWidth = 4; // One float, only thing that differs from first is size.
+		// Intermediate maximum luminance
 		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateMaximumLuminanceSRV ) );
+		SAFE_RELEASE( buf );
 
+		// Final luminance
+		bufDesc.ByteWidth = 4; // One float, only thing that differs from first is size.
 		uavDesc.Buffer.NumElements = 1;
-		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mAverageLuminanceUAV ) );
-
 		srvDesc.Buffer.NumElements = 1;
-		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mAverageLuminanceSRV ) );
 
+		// Average luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mAverageLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mAverageLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Maximum luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mMaximumLuminanceSRV ) );
 		SAFE_RELEASE( buf );
 	}
 

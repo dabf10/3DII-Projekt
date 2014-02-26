@@ -138,10 +138,14 @@ private:
 	// Accumulates lights
 	ID3D11RenderTargetView *mHDRRT;
 	ID3D11ShaderResourceView *mHDRSRV;
-	ID3D11UnorderedAccessView *mIntermediateLuminanceUAV;
-	ID3D11ShaderResourceView *mIntermediateLuminanceSRV;
+	ID3D11UnorderedAccessView *mIntermediateAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mIntermediateAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mIntermediateMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mIntermediateMaximumLuminanceSRV;
 	ID3D11UnorderedAccessView *mAverageLuminanceUAV;
 	ID3D11ShaderResourceView *mAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mMaximumLuminanceSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
