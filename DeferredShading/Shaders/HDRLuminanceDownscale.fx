@@ -164,6 +164,7 @@ void DownScaleFirstPass( uint3 groupID : SV_GroupID, uint3 dispatchThreadID : SV
 StructuredBuffer<float> gAverageValues1D : register( t0 );
 StructuredBuffer<float> gMaximumValues1D : register( t1 );
 StructuredBuffer<float> gPrevAverageLum : register( t2 );
+StructuredBuffer<float> gPrevMaximumLum : register( t3 );
 
 // Group shared memory to store the intermediate results
 groupshared float SharedAvgFinal[MAX_GROUPS];
@@ -241,11 +242,12 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 		//float finalLuminance = avgLum / gGroupCount;
 		float finalLuminance = exp( avgLum / gGroupCount );
 		float tau = 0.5;
-		float adaptedAverageLum = gPrevAverageLum[0] + ( finalLuminance - gPrevAverageLum[0]) * (1 - exp(-gDeltaTime * tau));
-		
+		float adaptedAverageLum = gPrevAverageLum[0] + ( finalLuminance - gPrevAverageLum[0] ) * (1 - exp(-gDeltaTime * tau));
+		float adaptedMaximumLum = gPrevMaximumLum[0] + ( maxLum - gPrevMaximumLum[0] ) * (1 - exp(-gDeltaTime * tau));
+
 		// Return average/maximum luminance.
 		gAverageLumOutput[0] = adaptedAverageLum;
-		gMaximumLumOutput[0] = maxLum;
+		gMaximumLumOutput[0] = adaptedMaximumLum;
 	}
 }
 

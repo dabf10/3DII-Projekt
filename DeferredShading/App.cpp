@@ -24,6 +24,8 @@ App::App() :
 	mPrevAverageLuminanceSRV( 0 ),
 	mMaximumLuminanceUAV( 0 ),
 	mMaximumLuminanceSRV( 0 ),
+	mPrevMaximumLuminanceUAV( 0 ),
+	mPrevMaximumLuminanceSRV( 0 ),
 	mMainDepthDSV( 0 ),
 	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
@@ -279,6 +281,8 @@ void App::OnD3D11ReleasingSwapChain( )
 	SAFE_RELEASE( mPrevAverageLuminanceSRV );
 	SAFE_RELEASE( mMaximumLuminanceUAV );
 	SAFE_RELEASE( mMaximumLuminanceSRV );
+	SAFE_RELEASE( mPrevMaximumLuminanceUAV );
+	SAFE_RELEASE( mPrevMaximumLuminanceSRV );
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
@@ -719,6 +723,7 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt )
 	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
 	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mMaximumLuminanceUAV );
 	mLuminanceDownscaleFX->GetVariableByName("gPrevAverageLum")->AsShaderResource()->SetResource( mPrevAverageLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevMaximumLum")->AsShaderResource()->SetResource( mPrevMaximumLuminanceSRV );
 
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Dispatch( 1, 1, 1 );
@@ -728,18 +733,14 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt )
 	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
 	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
 	mLuminanceDownscaleFX->GetVariableByName("gPrevAverageLum")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevMaximumLum")->AsShaderResource()->SetResource( 0 );
 	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 
 	// Final pass that does actual tone mapping
 	mPostProcessRT->Flip();
 	rt[0] = mPostProcessRT->GetRTV();
 	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL );
-
-	float middleGrey = 0.863f;
-	float white = 1.53f;
-	mHDRToneMapFX->GetVariableByName("gMiddleGrey")->AsScalar()->SetFloat(middleGrey);
-	mHDRToneMapFX->GetVariableByName("LumWhiteSqr")->AsScalar()->SetFloat(white * white);
-
+	
 	mHDRToneMapFX->GetVariableByName("gHDRTexture")->AsShaderResource()->SetResource( mHDRSRV );
 	mHDRToneMapFX->GetVariableByName("gAvgLum")->AsShaderResource()->SetResource( mAverageLuminanceSRV );
 	mHDRToneMapFX->GetVariableByName("gMaxLum")->AsShaderResource()->SetResource( mMaximumLuminanceSRV );
@@ -756,6 +757,8 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt )
 	// average luminance for the next.
 	std::swap( mAverageLuminanceSRV, mPrevAverageLuminanceSRV );
 	std::swap( mAverageLuminanceUAV, mPrevAverageLuminanceUAV );
+	std::swap( mMaximumLuminanceSRV, mPrevMaximumLuminanceSRV );
+	std::swap( mMaximumLuminanceUAV, mPrevMaximumLuminanceUAV );
 }
 
 
@@ -1097,6 +1100,12 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 		V_RETURN( device->CreateBuffer( &bufDesc, &initData, &buf ) );
 		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mPrevAverageLuminanceUAV ) );
 		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mPrevAverageLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Previous frame maximum luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, &initData, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mPrevMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mPrevMaximumLuminanceSRV ) );
 		SAFE_RELEASE( buf );
 	}
 

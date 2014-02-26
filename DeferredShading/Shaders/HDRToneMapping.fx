@@ -21,12 +21,6 @@ Texture2D<float4> gHDRTexture : register( t0 );
 StructuredBuffer<float> gAvgLum : register( t1 );
 StructuredBuffer<float> gMaxLum : register( t2 );
 
-cbuffer FinalPassConstants : register( b0 )
-{
-	float gMiddleGrey : packoffset( c0 );
-	float LumWhiteSqr : packoffset( c0.y );
-}
-
 static const float3 LUM_FACTOR = float3( 0.299, 0.587, 0.114 );
 static const float3x3 rgbToXYZ = float3x3( 0.4124, 0.2126, 0.0193,
 										   0.3576, 0.7152, 0.1192,
@@ -40,11 +34,10 @@ float3 ToneMap( float3 HDRColor )
 	// Luminance of current pixel
 	float luminance = dot( HDRColor, LUM_FACTOR );
 
-	// Apply Reinhard tone mapping
-	//float middleGrey = 1.03 - 2 / (2 + log(gAvgLum[0] + 1) / log(10));
-	float scaledLuminance = luminance * gMiddleGrey / gAvgLum[0];
-	scaledLuminance = scaledLuminance * (1 + scaledLuminance / (LumWhiteSqr)) / (1 + scaledLuminance);
-	//scaledLuminance = scaledLuminance * (1 + scaledLuminance / (gMaxLum[0] * gMaxLum[0])) / (1 + scaledLuminance);
+	// Apply Reinhard tone mapping. Older hardcoded values; middleGrey = 0.863; white quared = 1.53 * 1.53
+	float middleGrey = 1.03 - 2 / (2 + log(gAvgLum[0] + 1) / log(10));
+	float scaledLuminance = luminance * middleGrey / gAvgLum[0];
+	scaledLuminance = scaledLuminance * (1 + scaledLuminance / (gMaxLum[0] * gMaxLum[0])) / (1 + scaledLuminance);
 
 	// Apply scale to xyY color space where Y is luminosity and xy is chromaticity
 	// (eyes do not map red, green, and blue evenly). Convert RGB -> XYZ -> xyY:

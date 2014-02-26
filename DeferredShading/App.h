@@ -148,6 +148,8 @@ private:
 	ID3D11ShaderResourceView *mPrevAverageLuminanceSRV;
 	ID3D11UnorderedAccessView *mMaximumLuminanceUAV;
 	ID3D11ShaderResourceView *mMaximumLuminanceSRV;
+	ID3D11UnorderedAccessView *mPrevMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mPrevMaximumLuminanceSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
