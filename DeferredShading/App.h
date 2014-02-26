@@ -164,7 +164,6 @@ private:
 	ID3DX11Effect *mProjSpotlightFX;
 	ID3DX11EffectTechnique *mProjSpotlightTech;
 
-	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
 
 	ID3DX11Effect *mAverageLuminanceFX;

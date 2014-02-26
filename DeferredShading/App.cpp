@@ -37,7 +37,6 @@ App::App() :
 	mProjSpotlightFX( 0 ),
 	mProjSpotlightTech( 0 ),
 	mProjSpotlightColor( 0 ),
-	mCombineLightFX( 0 ),
 	mOldFilmFX( 0 ),
 	mAverageLuminanceFX( 0 ),
 	mHDRToneMapFX( 0 ),
@@ -201,7 +200,6 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mProjPointLightFX );
 	SAFE_RELEASE( mProjSpotlightFX );
 
-	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
 
 	SAFE_RELEASE( mAverageLuminanceFX );
@@ -523,17 +521,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// Render lights
 	//
 
-	// TODO: Jag renderar ljus till hdr just nu. Det som ska göras sen är att
-	// ljusshaders direkt kombinerar med färgdata från gbuffer. Egentligen vill vi
-	// kanske låta ssao göras först, så vi kan kombinera med det med en gång också.
 	RenderLights( pd3dImmediateContext, fTime );
 
-	// Tone mapping är vad som drar ner hdr till ldr men försöker bevara detaljer.
-	// Här måste man beräkna genomsnittlig luminance för scenen (max för nutty), 
-	// vilket görs genom downscale till 1x1. Det vet jag inte hur man gör på ett
-	// vettigt sätt.
-	// Jag tror för övrigt att tone mapping är något som görs på samma render target.
-	// Alltså kommer HDR texturen bli LDR som sedan visas.
+	// Tone map the HDR texture so that we can display it nicely.
 	ToneMap( pd3dImmediateContext );
 
 	//
@@ -561,32 +551,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
 
-
-
-	// TODO: Combination sker inte här. Det görs när ljus renderas (ingen light accum
-	// buffer, utan allt kombineras dirr till HDR)
-	//
-	// Render a full-screen quad that combines the light from the light map
-	// with the color map from the G-Buffer
-	//
-	//{
-	//	mPostProcessRT->Flip();
-	//	ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV();
-	//	pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
-
-	//	mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-	//	mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
-	//	mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource(mSSAO->AOMap());
-
-	//	mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//	pd3dImmediateContext->Draw( 3, 0 );
-
-	//	// Unbind shader resources
-	//	mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-	//	mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
-	//	mCombineLightFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
-	//	mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	//}
 
 	//
 	// Generate an old-film looking effect
@@ -711,26 +675,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	RenderText();
 }
 
-	//Res: back buffer width and height divided by 4
-	//Domain: back buffer width * height divided by 16 (eller Res.x * Res.y)
-	//GroupSize: width * height / (16 * 1024) eller (UINT)ceil((float)(width*height/16)/1024.0f)
-	// Sätt HDR SRV och intermediateluminanceuav
-	// Dispatcha första shadern med group count i x på <total back buffer pixels> / (16 * 1024) (GroupSize som sattes innan). Glöm ej 1 på y och z
-	// Efter första shadern körs andra shadern med samma constant buffer, fast med intermediate luminance srv och average luminance uav. (dispatcha en grupp (1,1,1))
-	// Nu är average luminance beräknat, och kan användas för att slutföra tone mapping.
-	// Nu renderas en full screen quad som returnerar LDR värden. Sätt LDR RTV som
-	// användes för light accumulation (kan man inte göra om hdr till ldr?). Sätt även
-	// hdr och average luminance srvs. Rendera sedan full screen triangle.
-	// Annat: Med shared memory kan en trådgrupp downscala många pixlar till en pixel.
-	// Med hela HDR texturen kan inte downscalas på en gång pga av begränsningar i DX11:
-	// 1) Varje trådgrupp begränsad till 1024 eller färre trådar. 2) Shared memory är
-	// begränsat till 16Kb. 3) Varje tråd kan bara skriva till 256 bytes av delat minne.
-	// Downscalar 16 pixlar per tråd, med 1024 trådar per grupp (max möjliga).
-	// Första compute shadern downscalar HDR till 1/16 storlek.
 void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext )
 {
 	ID3D11RenderTargetView *rt[1] = { NULL };
-	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL ); // testa 0, 0, 0?
+	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL );
 
 	// Common constants
 	int res[2] = { mBackBufferSurfaceDesc->Width / 4, mBackBufferSurfaceDesc->Height / 4 };
@@ -875,13 +823,6 @@ bool App::BuildFX(ID3D11Device *device)
 		return false;
 
 	mDirectionalLightTech = mDirectionalLightFX->GetTechniqueByIndex(0);
-
-	//
-	// CombineLight
-	//
-
-	if (!CompileShader( device, "Shaders/CombineLight.fx", &mCombineLightFX ))
-		return false;
 
 	//
 	// PointLight
@@ -1045,20 +986,6 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	texDesc.SampleDesc.Count = 1;
 	texDesc.SampleDesc.Quality = 0;
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
-	
-	//
-	// Light (not actually G-Buffer, but used to accumulate light)
-	//
-	//{
-	//	D3D11_TEXTURE2D_DESC lightTexDesc = texDesc;
-	//	lightTexDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	//	V_RETURN( device->CreateTexture2D( &lightTexDesc, 0, &tex) );
-	//	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
-	//	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
-	//
-	//	// Views saves reference
-	//	SAFE_RELEASE( tex );
-	//}
 
 	//
 	// HDR render target
@@ -1399,12 +1326,10 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 
 void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
-	// Bind the light accumulation buffer as a render target. Using additive blending,
+	// Bind the HDR buffer as render target. Using additive blending,
 	// the contribution of every light will be summed and stored in this buffer.
-	//pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, mMainDepthDSVReadOnly);
 	pd3dImmediateContext->OMSetRenderTargets( 1, &mHDRRT, mMainDepthDSVReadOnly );
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	//pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
 	pd3dImmediateContext->ClearRenderTargetView( mHDRRT, clearColor );
 	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
 	
