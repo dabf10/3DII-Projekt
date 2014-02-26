@@ -112,9 +112,6 @@
     <None Include="Shaders\DirectionalLight.fx">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="Shaders\CombineLight.fx">
-      <Filter>Shaders</Filter>
-    </None>
     <None Include="Shaders\PointLight.fx">
       <Filter>Shaders</Filter>
     </None>

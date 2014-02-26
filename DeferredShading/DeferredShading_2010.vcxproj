@@ -422,7 +422,6 @@
     <None Include="Shaders\BilateralBlur.fx" />
     <None Include="Shaders\CapsuleLight.fx" />
     <None Include="Shaders\ClearGBuffer.fx" />
-    <None Include="Shaders\CombineLight.fx" />
     <None Include="Shaders\DirectionalLight.fx" />
     <None Include="Shaders\FullscreenTexture.fx" />
     <None Include="Shaders\GBuffer.fx" />
