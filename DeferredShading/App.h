@@ -166,7 +166,7 @@ private:
 
 	ID3DX11Effect *mOldFilmFX;
 
-	ID3DX11Effect *mAverageLuminanceFX;
+	ID3DX11Effect *mLuminanceDownscaleFX;
 	ID3DX11Effect *mHDRToneMapFX;
 
 	ID3D11DepthStencilState *mNoDepthTest;

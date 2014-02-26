@@ -38,7 +38,7 @@ App::App() :
 	mProjSpotlightTech( 0 ),
 	mProjSpotlightColor( 0 ),
 	mOldFilmFX( 0 ),
-	mAverageLuminanceFX( 0 ),
+	mLuminanceDownscaleFX( 0 ),
 	mHDRToneMapFX( 0 ),
 	mNoDepthTest( 0 ),
 	mDepthGreaterEqual( 0 ),
@@ -202,7 +202,7 @@ void App::OnD3D11DestroyDevice( )
 
 	SAFE_RELEASE( mOldFilmFX );
 
-	SAFE_RELEASE( mAverageLuminanceFX );
+	SAFE_RELEASE( mLuminanceDownscaleFX );
 	SAFE_RELEASE( mHDRToneMapFX );
 
 	SAFE_RELEASE( mNoDepthTest );
@@ -683,31 +683,31 @@ void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext )
 	// Common constants
 	int res[2] = { mBackBufferSurfaceDesc->Width / 4, mBackBufferSurfaceDesc->Height / 4 };
 	UINT threadGroups = (UINT)ceil((float)(mBackBufferSurfaceDesc->Width * mBackBufferSurfaceDesc->Height / 16.0f) / 1024.0f);
-	mAverageLuminanceFX->GetVariableByName("gDownscaleRes")->AsVector()->SetIntVector(res);
-	mAverageLuminanceFX->GetVariableByName("gDownscaleNumPixels")->AsScalar()->SetInt(res[0] * res[1]);
-	mAverageLuminanceFX->GetVariableByName("gGroupCount")->AsScalar()->SetInt(threadGroups);
+	mLuminanceDownscaleFX->GetVariableByName("gDownscaleRes")->AsVector()->SetIntVector(res);
+	mLuminanceDownscaleFX->GetVariableByName("gDownscaleNumPixels")->AsScalar()->SetInt(res[0] * res[1]);
+	mLuminanceDownscaleFX->GetVariableByName("gGroupCount")->AsScalar()->SetInt(threadGroups);
 	
 	// First pass downsamples to a small 1D array.
-	mAverageLuminanceFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource(mHDRSRV);
-	mAverageLuminanceFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateLuminanceUAV);
+	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource(mHDRSRV);
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateLuminanceUAV);
 
-	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Dispatch( threadGroups, 1, 1 );
 
-	mAverageLuminanceFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource( 0 );
-	mAverageLuminanceFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
-	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	// Second pass downscales to a single pixel
-	mAverageLuminanceFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( mIntermediateLuminanceSRV );
-	mAverageLuminanceFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( mIntermediateLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
 
-	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Dispatch( 1, 1, 1 );
 
-	mAverageLuminanceFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( 0 );
-	mAverageLuminanceFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
-	mAverageLuminanceFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
 
 	// Final pass that does actual tone mapping
 	mPostProcessRT->Flip();
@@ -880,7 +880,7 @@ bool App::BuildFX(ID3D11Device *device)
 	// AverageLuminance
 	//
 
-	if (!CompileShader( device, "Shaders/HDRAverageLuminance.fx", &mAverageLuminanceFX ))
+	if (!CompileShader( device, "Shaders/HDRLuminanceDownscale.fx", &mLuminanceDownscaleFX ))
 		return false;
 
 	//
@@ -1358,7 +1358,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mDirectionalLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
 	// Render directional lights
-	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(0.4f, 0.4f, 0.4f), XMFLOAT3(0, -1, 1) );
+	float uniformLight = 0.4f;
+	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(uniformLight, uniformLight, uniformLight), XMFLOAT3(0, -1, 1) );
 
 	// Unbind the G-Buffer textures
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1417,7 +1418,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 		// original sign of the respective components to compensate for removed signs.
 		XMFLOAT3 pos = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
 
-		//RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
+		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
 	}
 
 	// Unbind the G-Buffer textures
@@ -1449,8 +1450,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
-	//RenderSpotlight( pd3dImmediateContext, color, position, direction, range,
-	//	outerAngleDeg, innerAngleDeg );
+	RenderSpotlight( pd3dImmediateContext, color, position, direction, range,
+		outerAngleDeg, innerAngleDeg );
 
 	// Unbind G-Buffer textures
 	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1472,10 +1473,10 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
 	
 	// Render capsule lights
-	//RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
-	//	XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
-	//RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
-	//	XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
+	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
 
 	// Unbind the G-Buffer textures
 	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1497,7 +1498,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
 	mProjPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
-	//RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 1.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 1.0f, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1521,8 +1522,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
 	// Reuse position and stuff from previous spotlight
-	//RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
-	//	outerAngleDeg, innerAngleDeg );
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
+		outerAngleDeg, innerAngleDeg );
 
 	// Unbind G-Buffer textures
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );

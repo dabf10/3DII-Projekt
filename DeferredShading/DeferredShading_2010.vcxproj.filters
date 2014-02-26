@@ -139,10 +139,10 @@
     <None Include="Shaders\ProjSpotlight.fx">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="Shaders\HDRAverageLuminance.fx">
+    <None Include="Shaders\HDRToneMapping.fx">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="Shaders\HDRToneMapping.fx">
+    <None Include="Shaders\HDRLuminanceDownscale.fx">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>

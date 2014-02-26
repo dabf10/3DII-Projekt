@@ -122,7 +122,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// multiplicerar med gbufferns färg rakt av. Ljusshaders kommer behöva anpassas
 	// så de returnerar float3
 
-	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	float ambientLight = 1.3;
 	return float4( color.rgb * (diffuseLight + ambientLight) + specularLight, 1 );
 }
 
