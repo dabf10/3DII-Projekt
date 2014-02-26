@@ -112,6 +112,9 @@
     <None Include="Shaders\DirectionalLight.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\CombineLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
     <None Include="Shaders\PointLight.fx">
       <Filter>Shaders</Filter>
     </None>
@@ -139,10 +142,10 @@
     <None Include="Shaders\ProjSpotlight.fx">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="Shaders\HDRToneMapping.fx">
+    <None Include="Shaders\HDRAverageLuminance.fx">
       <Filter>Shaders</Filter>
     </None>
-    <None Include="Shaders\HDRLuminanceDownscale.fx">
+    <None Include="Shaders\HDRToneMapping.fx">
       <Filter>Shaders</Filter>
     </None>
   </ItemGroup>
