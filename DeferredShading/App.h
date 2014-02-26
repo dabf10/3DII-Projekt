@@ -100,7 +100,7 @@ private:
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
 
-	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext );
+	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt );
 
 private:
 	Model *mBth;
@@ -144,6 +144,8 @@ private:
 	ID3D11ShaderResourceView *mIntermediateMaximumLuminanceSRV;
 	ID3D11UnorderedAccessView *mAverageLuminanceUAV;
 	ID3D11ShaderResourceView *mAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mPrevAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mPrevAverageLuminanceSRV;
 	ID3D11UnorderedAccessView *mMaximumLuminanceUAV;
 	ID3D11ShaderResourceView *mMaximumLuminanceSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)

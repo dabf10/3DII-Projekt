@@ -18,6 +18,7 @@ cbuffer DownScaleConstants : register( b0 )
 	uint2 gDownscaleRes : packoffset( c0 ); // width and height divided by 4
 	uint gDownscaleNumPixels : packoffset( c0.z ); // Total pixels in the downscaled image
 	uint gGroupCount : packoffset( c0.w ); // Number of groups dispatched on the first pass
+	float gDeltaTime : packoffset( c1 ); // Time elapsed since last frame
 }
 
 // Shared memory to store intermediate results
@@ -162,6 +163,7 @@ void DownScaleFirstPass( uint3 groupID : SV_GroupID, uint3 dispatchThreadID : SV
 
 StructuredBuffer<float> gAverageValues1D : register( t0 );
 StructuredBuffer<float> gMaximumValues1D : register( t1 );
+StructuredBuffer<float> gPrevAverageLum : register( t2 );
 
 // Group shared memory to store the intermediate results
 groupshared float SharedAvgFinal[MAX_GROUPS];
@@ -235,9 +237,14 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 		maxLum = max( maxLum, dispatchThreadID.x + step2 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step2] : 0.0 );
 		maxLum = max( maxLum, dispatchThreadID.x + step3 < gGroupCount ? SharedMaxFinal[dispatchThreadID.x + step3] : 0.0 );
 
+		// Calculate adapted luminance
+		//float finalLuminance = avgLum / gGroupCount;
+		float finalLuminance = exp( avgLum / gGroupCount );
+		float tau = 0.5;
+		float adaptedAverageLum = gPrevAverageLum[0] + ( finalLuminance - gPrevAverageLum[0]) * (1 - exp(-gDeltaTime * tau));
+		
 		// Return average/maximum luminance.
-		gAverageLumOutput[0] = exp( max( avgLum / gGroupCount, 0.0001 ) );
-		//gAverageLumOutput[0] = max( avgLum / gGroupCount, 0.0001 );
+		gAverageLumOutput[0] = adaptedAverageLum;
 		gMaximumLumOutput[0] = maxLum;
 	}
 }
