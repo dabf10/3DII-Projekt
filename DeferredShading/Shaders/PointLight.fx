@@ -3,7 +3,7 @@ float4x4 gWorldView;
 float3 gLightColor;
 float3 gLightPositionVS;
 float gLightRadius; // How far the light reaches
-float gLightIntensity = 1.0f; // Control the brightness of the light
+float gLightIntensity; // Control the brightness of the light
 float gProjA;
 float gProjB;
 
@@ -102,7 +102,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularLight = specularIntensity * pow(x, y);
 	
 	// Take attenuation and light intensity into account
-	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	float ambientLight = 0.3f;
 	return float4( attenuation * gLightIntensity * color.rgb * (diffuseLight + ambientLight) + attenuation * gLightIntensity * specularLight, 1 );
 }
 

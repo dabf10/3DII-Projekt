@@ -86,19 +86,19 @@ private:
 	HRESULT CreateGBuffer( ID3D11Device *device, UINT width, UINT height );
 	void RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
 	void RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext,
-		XMFLOAT3 color, XMFLOAT3 direction );
+		XMFLOAT3 color, XMFLOAT3 direction, float intensity );
 	void RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, float radius, float intensity );
 	void RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
 	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float length );
+		XMFLOAT3 position, XMFLOAT3 direction, float range, float length, float intensity );
 	void RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, float radius, float intensity, float fTime ); // Remove time, it's just to test light animation
 	void RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg );
+		float innerAngleDeg, float intensity );
 
 	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt );
 

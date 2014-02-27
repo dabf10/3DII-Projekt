@@ -121,7 +121,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularLight = specularIntensity * pow(x, y);
 	
 	// Take attenuation and light intensity into account
-	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	float ambientLight = 0.3f;
 	return float4( distAtt * coneAtt * color.rgb * (diffuseLight + ambientLight) + distAtt * coneAtt * specularLight, 1 );
 }
 

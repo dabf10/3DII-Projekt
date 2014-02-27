@@ -241,9 +241,10 @@ void DownScaleSecondPass( uint3 dispatchThreadID : SV_DispatchThreadID )
 		// Calculate adapted luminance
 		//float finalLuminance = avgLum / gGroupCount;
 		float finalLuminance = exp( avgLum / gGroupCount );
-		float tau = 0.5;
-		float adaptedAverageLum = gPrevAverageLum[0] + ( finalLuminance - gPrevAverageLum[0] ) * (1 - exp(-gDeltaTime * tau));
-		float adaptedMaximumLum = gPrevMaximumLum[0] + ( maxLum - gPrevMaximumLum[0] ) * (1 - exp(-gDeltaTime * tau));
+		float tauAverage = 0.50;
+		float tauMaximum = 0.10;
+		float adaptedAverageLum = gPrevAverageLum[0] + ( finalLuminance - gPrevAverageLum[0] ) * (1 - exp(-gDeltaTime * tauAverage));
+		float adaptedMaximumLum = gPrevMaximumLum[0] + ( maxLum - gPrevMaximumLum[0] ) * (1 - exp(-gDeltaTime * tauMaximum));
 
 		// Return average/maximum luminance.
 		gAverageLumOutput[0] = adaptedAverageLum;

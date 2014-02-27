@@ -1141,14 +1141,14 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 		SAFE_RELEASE( tex );
 	}
 
-
 	return S_OK;
 }
 
-void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction )
+void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction, float intensity )
 {
 	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mDirectionalLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(XMLoadFloat3(&direction), mCamera.View()));
+	mDirectionalLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
@@ -1190,7 +1190,7 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
@@ -1217,6 +1217,7 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	//// Test to check if the camera is inside light volume.
 	//bool inside = false;
@@ -1254,7 +1255,7 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 }
 
 void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
-	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float range, float length )
+	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float range, float length, float intensity )
 {
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x, direction.y, direction.z, 0.0f));
 
@@ -1265,6 +1266,7 @@ void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
 	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
 	mCapsuleLightFX->GetVariableByName("gLightLength")->AsScalar()->SetFloat(length);
 	mCapsuleLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mCapsuleLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
@@ -1313,7 +1315,7 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 
 void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg )
+		float innerAngleDeg, float intensity )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -1347,7 +1349,7 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
 	mProjSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
-	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(1.0f);
+	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	//// Test to check if the camera is inside light volume.
 	//bool inside = false;
@@ -1422,7 +1424,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 
 	// Render directional lights
 	float uniformLight = 0.4f;
-	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(uniformLight, uniformLight, uniformLight), XMFLOAT3(0, -1, 1) );
+	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(uniformLight, uniformLight, uniformLight), XMFLOAT3(0, -1, 1), 1.0f );
 
 	// Unbind the G-Buffer textures
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1457,7 +1459,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
 
 	float lightRadiusFirstSet = 6.0f;
-	float lightIntensityFirstSet = 2.0f;
+	float lightIntensityFirstSet = 4.0f;
 
 	for (UINT i = 0; i < 10; ++i)
 	{
@@ -1513,7 +1515,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
-	RenderSpotlight( pd3dImmediateContext, color, position, direction, range,
+	RenderSpotlight( pd3dImmediateContext, color, 5.0f, position, direction, range,
 		outerAngleDeg, innerAngleDeg );
 
 	// Unbind G-Buffer textures
@@ -1537,9 +1539,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	
 	// Render capsule lights
 	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f, 2.0f );
 	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
+		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f, 2.0f );
 
 	// Unbind the G-Buffer textures
 	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1561,7 +1563,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
 	mProjPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
 
-	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 1.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 5.0f, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1586,7 +1588,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 
 	// Reuse position and stuff from previous spotlight
 	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
-		outerAngleDeg, innerAngleDeg );
+		outerAngleDeg, innerAngleDeg, 7.0f );
 
 	// Unbind G-Buffer textures
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );

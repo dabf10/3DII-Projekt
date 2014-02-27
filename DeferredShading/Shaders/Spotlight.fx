@@ -8,6 +8,7 @@ float gCosInner;
 float3 gLightColor;
 float3 gLightPositionVS;
 float gLightRangeRcp;
+float gLightIntensity;
 
 Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
@@ -73,7 +74,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	
 	// Diffuse light
 	float NdL = saturate( dot( normal, toLight ) );
-	float3 diffuseLight = NdL * gLightColor.rgb;
+	float3 diffuseLight = gLightIntensity * NdL * gLightColor.rgb;
 
 	// Reflection vector
 	float3 reflectionVector = normalize(reflect(-toLight, normal));
@@ -87,7 +88,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularLight = specularIntensity * pow(x, y);
 	
 	// Take attenuation and light intensity into account
-	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
+	float ambientLight = 0.3f;
 	return float4( distAtt * coneAtt * color.rgb * (diffuseLight + ambientLight) + distAtt * coneAtt * specularLight, 1 );
 }
 

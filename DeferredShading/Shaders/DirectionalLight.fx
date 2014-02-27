@@ -8,6 +8,7 @@ float3 gLightColor;
 float gProjA;
 float gProjB;
 float4x4 gInvProj;
+float gLightIntensity;
 
 // G-Buffer textures
 Texture2D gColorMap; // Diffuse + specular intensity in alpha
@@ -74,7 +75,6 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Get specular intensity from gColorMap.
 	float4 color = gColorMap.Sample( gColorSampler, input.TexC );
 	float specularIntensity = color.a;
-	//float specularIntensity = gColorMap.Sample( gColorSampler, input.TexC ).a;
 
 	// For specular lighting, we need to have the vector from the camera to the
 	// point being shaded, alas, we need the position. Right now we have the
@@ -96,7 +96,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 lightVector = -normalize(gLightDirectionVS);
 
 	// Compute diffuse light
-	float NdL = max(0, dot(normal, lightVector));
+	float NdL = gLightIntensity * max(0, dot(normal, lightVector));
 
 	float3 diffuseLight = NdL * gLightColor.rgb;
 
