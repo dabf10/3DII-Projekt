@@ -14,6 +14,7 @@ App::App() :
 	mTxtHelper( 0 ),
 	mHDRRT( 0 ),
 	mHDRSRV( 0 ),
+	mHDRUAV( 0 ),
 	mIntermediateAverageLuminanceUAV( 0 ),
 	mIntermediateAverageLuminanceSRV( 0 ),
 	mIntermediateMaximumLuminanceUAV( 0 ),
@@ -45,6 +46,7 @@ App::App() :
 	mProjSpotlightFX( 0 ),
 	mProjSpotlightTech( 0 ),
 	mProjSpotlightColor( 0 ),
+	mTiledDeferredFX( 0 ),
 	mOldFilmFX( 0 ),
 	mLuminanceDownscaleFX( 0 ),
 	mHDRToneMapFX( 0 ),
@@ -207,6 +209,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCapsuleLightFX );
 	SAFE_RELEASE( mProjPointLightFX );
 	SAFE_RELEASE( mProjSpotlightFX );
+	SAFE_RELEASE( mTiledDeferredFX );
 
 	SAFE_RELEASE( mOldFilmFX );
 
@@ -271,6 +274,7 @@ void App::OnD3D11ReleasingSwapChain( )
 	
 	SAFE_RELEASE( mHDRRT );
 	SAFE_RELEASE( mHDRSRV );
+	SAFE_RELEASE( mHDRUAV );
 	SAFE_RELEASE( mIntermediateAverageLuminanceUAV );
 	SAFE_RELEASE( mIntermediateAverageLuminanceSRV );
 	SAFE_RELEASE( mIntermediateMaximumLuminanceUAV );
@@ -369,6 +373,16 @@ bool App::Init( )
 	std::vector<gnomeImporter::vertex> vertices;
 	std::vector<int> hest;
 	importer.getVectors("Flamingo_Final_1.GNOME", materials, vertices, hest);
+
+	TestLight test;
+	for (int i = 0; i < 512; ++i)
+	{
+		test.Color = XMFLOAT3( i / 512.f, pow(static_cast<float>(-1), static_cast<float>(i)) * i / 1024.f, 1 - i / 512.f );
+		test.PositionVS = XMFLOAT3( 0, 0, 0 );
+		test.Radius = 20;
+		test.Intensity = 4;
+		mTestLights.push_back( test );
+	}
 
 	return true;
 }
@@ -538,6 +552,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	//
 
 	RenderLights( pd3dImmediateContext, fTime );
+	RenderLightsTiled( pd3dImmediateContext, fTime );
 
 	// Tone map the HDR texture so that we can display it nicely.
 	ToneMap( pd3dImmediateContext, fElapsedTime );
@@ -921,6 +936,13 @@ bool App::BuildFX(ID3D11Device *device)
 	if (!CompileShader( device, "Shaders/HDRToneMapping.fx", &mHDRToneMapFX ))
 		return false;
 
+	//
+	// TiledDeferred
+	//
+
+	if (!CompileShader( device, "Shaders/TiledDeferred.fx", &mTiledDeferredFX ))
+		return false;
+
 	return true;
 }
 
@@ -1024,9 +1046,11 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	{
 		D3D11_TEXTURE2D_DESC hdrTexDesc = texDesc;
 		hdrTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		hdrTexDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 		V_RETURN( device->CreateTexture2D( &hdrTexDesc, 0, &tex ) );
 		V_RETURN( device->CreateRenderTargetView( tex, NULL, &mHDRRT ) );
 		V_RETURN( device->CreateShaderResourceView( tex, NULL, &mHDRSRV ) );
+		V_RETURN( device->CreateUnorderedAccessView( tex, NULL, &mHDRUAV ) );
 
 		// Views saves reference
 		SAFE_RELEASE( tex );
@@ -1604,4 +1628,89 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
 	pd3dImmediateContext->RSSetState( 0 );
 	pd3dImmediateContext->OMSetDepthStencilState(0, 0);
+}
+
+void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
+{
+	TestLight lights[10];
+	// Generate some lights
+	{
+		XMFLOAT3 colors[10];
+		colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
+		colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
+		colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
+		colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
+		colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
+		colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
+		colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
+		colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
+		colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
+		colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
+
+		float lightRadius = 6.0f;
+		float lightIntensity = 4.0f;
+
+		for (UINT i = 0; i < 10; ++i)
+		{
+			XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
+			float circleRadius = 19.3f;
+
+			float power = 6;
+			float powerRcp = 1 / power;
+			float x = XMVectorGetX(sphDir);
+			float xSign = x / abs(x);
+			float xPowered = powf( abs(x), power );
+			float z = XMVectorGetZ(sphDir);
+			float zSign = z / abs(z);
+			float zPowered = powf( abs(z), power );
+
+			// Calculate point on superellipse
+			float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
+			float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
+
+			// Scale by circle radius to get world position. Also multiply by the
+			// original sign of the respective components to compensate for removed signs.
+			XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
+			XMVECTOR posVS = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
+
+			lights[i].PositionVS = (float*)&posVS;
+			lights[i].Color = colors[i];
+			lights[i].Radius = lightRadius;
+			lights[i].Intensity = lightIntensity;
+		}
+	}
+
+	pd3dImmediateContext->OMSetRenderTargets( 0, 0, 0 );
+
+	int groupCount[2];
+	groupCount[0] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Width / 16.f) );
+	groupCount[1] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Height / 16.f) );
+
+	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
+	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( mGBuffer->NormalSRV() );
+	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
+	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( mHDRUAV );
+	
+	//int lightCount = mTestLights.size();
+	//if (lightCount > 1024)
+	//	lightCount = 1024;
+	int lightCount = 10;
+	//mTiledDeferredFX->GetVariableByName("gLights")->AsConstantBuffer()->SetRawValue( mTestLights.data(), sizeof(TestLight) * mTestLights.size(), mTestLights.size() );
+	//mTiledDeferredFX->GetVariableByName("gLights")->AsConstantBuffer()->SetRawValue( lights, sizeof(TestLight) * 10, 10 );
+	mTiledDeferredFX->GetVariableByName("gLights")->SetRawValue( lights, 0, sizeof(TestLight) * 10 );
+	mTiledDeferredFX->GetVariableByName("gLightCount")->AsScalar()->SetInt( lightCount );
+
+	mTiledDeferredFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix( (float*)&mCamera.Proj() );
+	mTiledDeferredFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &XMMatrixDeterminant( mCamera.Proj() ), mCamera.Proj() ) );
+	mTiledDeferredFX->GetVariableByName("gBackbufferWidth")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Width) );
+	mTiledDeferredFX->GetVariableByName("gBackbufferHeight")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Height) );
+
+	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( groupCount[0], groupCount[1], 1 );
+
+	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 }

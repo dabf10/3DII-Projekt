@@ -433,6 +433,7 @@
     <None Include="Shaders\ProjSpotlight.fx" />
     <None Include="Shaders\Spotlight.fx" />
     <None Include="Shaders\SSAO.fx" />
+    <None Include="Shaders\TiledDeferred.fx" />
   </ItemGroup>
   <ItemGroup>
   </ItemGroup>

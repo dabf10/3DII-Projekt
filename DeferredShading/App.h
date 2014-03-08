@@ -75,6 +75,15 @@ public:
 	bool Init( );
 
 private:
+	struct TestLight
+	{
+		XMFLOAT3 PositionVS;
+		float Radius;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
+private:
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
 	bool BuildVertexLayout( ID3D11Device *device );
@@ -99,6 +108,7 @@ private:
 	void RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg, float intensity );
+	void RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
 
 	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt );
 
@@ -138,6 +148,7 @@ private:
 	// Accumulates lights
 	ID3D11RenderTargetView *mHDRRT;
 	ID3D11ShaderResourceView *mHDRSRV;
+	ID3D11UnorderedAccessView *mHDRUAV;
 	ID3D11UnorderedAccessView *mIntermediateAverageLuminanceUAV;
 	ID3D11ShaderResourceView *mIntermediateAverageLuminanceSRV;
 	ID3D11UnorderedAccessView *mIntermediateMaximumLuminanceUAV;
@@ -171,6 +182,7 @@ private:
 	ID3DX11EffectTechnique *mProjPointLightTech;
 	ID3DX11Effect *mProjSpotlightFX;
 	ID3DX11EffectTechnique *mProjSpotlightTech;
+	ID3DX11Effect *mTiledDeferredFX;
 
 	ID3DX11Effect *mOldFilmFX;
 
@@ -191,6 +203,8 @@ private:
 	GBuffer *mGBuffer;
 
 	PostProcessRT *mPostProcessRT;
+
+	std::vector<TestLight> mTestLights;
 };
 
 #endif // _APP_H_
