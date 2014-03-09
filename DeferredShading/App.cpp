@@ -1423,6 +1423,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
 	
 	// Common for every light
+	// TODO: Wtf!?  Varför beräknar jag determinant och skickar med? Det är ju en
+	// utparameter som funktionen fyller i... stoopid
 	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
 	// projA and projB are projection constants based on camera near and far
 	// clip planes, used to reconstruct view space position from depth in shaders.

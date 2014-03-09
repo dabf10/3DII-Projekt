@@ -88,15 +88,13 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	float y = (1 - dispatchThreadID.y / gBackbufferHeight) * 2 - 1;
 	float4 posH = float4( x, y, depth, 1 );
 	float4 posVS = mul( posH, gInvProj );
+	posVS /= posVS.w;
 	
-	gbuffer.PosVS = posVS.xyz / posVS.w;
+	gbuffer.PosVS = posVS.xyz;
 	gbuffer.Diffuse = diffuse_specIntensity.rgb;
 	gbuffer.Normal = 2.0f * normal_specPower.xyz - 1.0f;
 	gbuffer.SpecularIntensity = diffuse_specIntensity.a;
 	gbuffer.SpecularPower = normal_specPower.a * 255;
-
-	// Step 2 - Calculate min and max z in threadgroup / tile
-	uint depthInt = asuint( depth );
 
 	// Initialize group shared memory
 	if (groupIndex == 0)
@@ -107,6 +105,10 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	}
 
 	GroupMemoryBarrierWithGroupSync();
+
+	// Step 2 - Calculate min and max z in threadgroup / tile
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
+	uint depthInt = asuint( linearDepth );
 
 	// Only works on ints, but we can cast to int because z is always positive
 	// Set group minimum
@@ -143,6 +145,34 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// - Synchronize thread group
 	// - We now know which light sources affect the tile
 
+	// Calculate tile frustum
+	// Extrahering av plan kan ses i RTR (s.774), där skillnaden är att kolumner
+	// används istället för rader eftersom DX är vänsterorienterat. Här bryr vi
+	// oss inte om att negera planen eftersom vi vill att de ska peka in i frustum.
+	// Enbart projektionsmatrisen används eftersom vi då kommer arbeta i view space.
+	// Vidare är de använda kolumnerna modifierade för rutans frustum.
+	float4 frustumPlanes[6];
+	// TODO: Bara BLOCK_SIZE istället för 2 * ?
+	float2 tileScale = float2(gBackbufferWidth, gBackbufferHeight) * rcp( float( 2 * BLOCK_SIZE ) );
+	float2 tileBias = tileScale - float2( groupID.xy );
+	float4 col1 = float4( gProj._11 * tileScale.x, 0.0f, tileBias.x, 0.0f );
+	float4 col2 = float4( 0.0f, -gProj._22 * tileScale.y, tileBias.y, 0.0f );
+	float4 col4 = float4( 0.0f, 0.0f, 1.0f, 0.0f );
+	frustumPlanes[0] = col4 + col1; // Left plane
+	frustumPlanes[1] = col4 - col1; // Right plane
+	frustumPlanes[2] = col4 - col2; // Top plane
+	frustumPlanes[3] = col4 + col2; // Bottom plane
+	// Remember: First three components are the plane normal (a,b,c). The last
+	// component w = -(ax + by + cz) where (x,y,z) is a point on the plane.
+	frustumPlanes[4] = float4( 0.0f, 0.0f, 1.0f, -minGroupDepth ); // Near plane
+	frustumPlanes[5] = float4( 0.0f, 0.0f, -1.0f, maxGroupDepth ); // Far plane
+	[unroll]
+	for (int i = 0; i < 4; ++i)
+	{
+		// Normalize planes (near and far already normalized)
+		frustumPlanes[i] *= rcp( length( frustumPlanes[i].xyz ) );
+	}
+
 	uint threadCount = BLOCK_SIZE * BLOCK_SIZE;
 	uint passCount = (gLightCount + threadCount - 1) / threadCount;
 
@@ -151,16 +181,39 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		uint lightIndex = passIt * threadCount + groupIndex;
 
 		// Prevent overrun by clamping to a last "null" light
+		// TODO: När vi clampar till null-ljus vill vi se till att ljuset har
+		// egenskaper som alltid misslyckas intersection med frustum (och gärna
+		// snabbt). Det betyder att ljuset aldrig ens kommer beräknas på senare,
+		// även om det inte skulle påverka resultat. Men vi sparar in lite beräkningar.
 		lightIndex = min( lightIndex, gLightCount );
 		
+		// Intersection code begin
+		Light light = gLights[lightIndex];
+			// Position already in VS :)
+		bool inFrustum = true;
+		[unroll]
+		for (uint i = 0; i < 6; ++i)
+		{
+			float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+			inFrustum = inFrustum && (-light.Radius <= dist);
+		}
+
+		if (inFrustum)
+		{
+			uint offset;
+			InterlockedAdd( visibleLightCount, 1, offset );
+			visibleLightIndices[offset] = lightIndex;
+		}
+		// Intersection code end
+
 		//if (intersects(gLights[lightIndex], tile))
 		//{
 		//	uint offset;
 		//	InterlockedAdd(visibleLightCount, 1, offset);
 		//	visibleLightIndices[offset] = lightIndex;
 		//}
-		visibleLightCount = gLightCount; // TODO: remove
-		visibleLightIndices[lightIndex] = lightIndex; // TODO: remove
+		//visibleLightCount = gLightCount; // TODO: remove
+		//visibleLightIndices[lightIndex] = lightIndex; // TODO: remove
 	}
 
 	GroupMemoryBarrierWithGroupSync();
