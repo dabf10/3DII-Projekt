@@ -58,7 +58,8 @@ App::App() :
 	mCullNone( 0 ),
 	mSSAO( 0 ),
 	mGBuffer( 0 ),
-	mPostProcessRT( 0 )
+	mPostProcessRT( 0 ),
+	mPointLightsSRV( 0 )
 {
 }
 
@@ -167,6 +168,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullFront ) );
 	rsDesc.CullMode = D3D11_CULL_NONE;
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullNone ) );
+
+	V_RETURN( CreateLightBuffers( pd3dDevice ) );
     
 	return S_OK;
 }
@@ -222,6 +225,8 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCullBack );
 	SAFE_RELEASE( mCullFront );
 	SAFE_RELEASE( mCullNone );
+
+	SAFE_RELEASE( mPointLightsSRV );
 }
 
 //--------------------------------------------------------------------------------------
@@ -374,15 +379,8 @@ bool App::Init( )
 	std::vector<int> hest;
 	importer.getVectors("Flamingo_Final_1.GNOME", materials, vertices, hest);
 
-	TestLight test;
-	for (int i = 0; i < 512; ++i)
-	{
-		test.Color = XMFLOAT3( i / 512.f, pow(static_cast<float>(-1), static_cast<float>(i)) * i / 1024.f, 1 - i / 512.f );
-		test.PositionVS = XMFLOAT3( 0, 0, 0 );
-		test.Radius = 20;
-		test.Intensity = 4;
-		mTestLights.push_back( test );
-	}
+	// Light arrays
+	mPointLights.insert( mPointLights.begin(), 10, PointLight() ); // Hard coded for now :) (values set in AnimateLights())
 
 	return true;
 }
@@ -409,6 +407,58 @@ void App::OnFrameMove( double fTime, float fElapsedTime )
 		mCamera.Strafe(cameraSpeed * fElapsedTime);
 
 	mCamera.UpdateViewMatrix();
+
+	AnimateLights( fTime );
+}
+
+
+void App::AnimateLights( float fTime )
+{
+	static XMFLOAT3 colors[10] =
+	{
+		XMFLOAT3( 0.133f, 0.545f, 0.133f ), // ForestGreen
+		XMFLOAT3( 0, 0, 1 ), // Blue
+		XMFLOAT3( 1, 0.75294f, 0.796078f ), // Pink
+		XMFLOAT3( 1, 1, 0 ), // Yellow
+		XMFLOAT3( 1, 0.6470588f, 0 ), // Orange
+		XMFLOAT3( 0, 0.5f, 0 ), // Green
+		XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ), // Crimson
+		XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ), // CornFlowerBlue
+		XMFLOAT3( 1, 0.843137f, 0 ), // Gold
+		XMFLOAT3( 0.94117647f, 1, 0.94117647f ), // Honeydew
+	};
+
+	float lightRadius = 6.0f;
+	float lightIntensity = 4.0f;
+
+	for (UINT i = 0; i < 10; ++i)
+	{
+		XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
+		float circleRadius = 19.3f;
+
+		float power = 6;
+		float powerRcp = 1 / power;
+		float x = XMVectorGetX(sphDir);
+		float xSign = x / abs(x);
+		float xPowered = powf( abs(x), power );
+		float z = XMVectorGetZ(sphDir);
+		float zSign = z / abs(z);
+		float zPowered = powf( abs(z), power );
+
+		// Calculate point on superellipse
+		float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
+		float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
+
+		// Scale by circle radius to get world position. Also multiply by the
+		// original sign of the respective components to compensate for removed signs.
+		XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
+		XMVECTOR posVS = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
+
+		mPointLights[i].PositionVS = (float*)&posVS;
+		mPointLights[i].Color = colors[i];
+		mPointLights[i].Radius = lightRadius;
+		mPointLights[i].Intensity = lightIntensity;
+	}
 }
 
 
@@ -1168,6 +1218,39 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	return S_OK;
 }
 
+HRESULT App::CreateLightBuffers( ID3D11Device *pd3dDevice )
+{
+	HRESULT hr;
+
+	// Description for the underlying buffer.
+	D3D11_BUFFER_DESC bufDesc;
+	ZeroMemory( &bufDesc, sizeof( D3D11_BUFFER_DESC ) );
+	bufDesc.Usage = D3D11_USAGE_DYNAMIC; // I want to CPU to write
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	bufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	ID3D11Buffer *buffy;
+
+	// SRV for shader to read stuff
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+	ZeroMemory( &srvDesc, sizeof( D3D11_SHADER_RESOURCE_VIEW_DESC ) );
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+
+	// Point lights
+	{
+		bufDesc.StructureByteStride = sizeof( PointLight );
+		bufDesc.ByteWidth = mPointLights.size() * sizeof( PointLight );
+		V_RETURN( pd3dDevice->CreateBuffer( &bufDesc, NULL, &buffy ) );
+		
+		srvDesc.Buffer.NumElements = mPointLights.size();
+		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mPointLightsSRV ) );
+
+		SAFE_RELEASE( buffy );
+	}
+}
+
 void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction, float intensity )
 {
 	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
@@ -1634,53 +1717,15 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 
 void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
-	TestLight lights[10];
-	// Generate some lights
-	{
-		XMFLOAT3 colors[10];
-		colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
-		colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
-		colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
-		colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
-		colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
-		colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
-		colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
-		colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
-		colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
-		colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
-
-		float lightRadius = 6.0f;
-		float lightIntensity = 4.0f;
-
-		for (UINT i = 0; i < 10; ++i)
-		{
-			XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
-			float circleRadius = 19.3f;
-
-			float power = 6;
-			float powerRcp = 1 / power;
-			float x = XMVectorGetX(sphDir);
-			float xSign = x / abs(x);
-			float xPowered = powf( abs(x), power );
-			float z = XMVectorGetZ(sphDir);
-			float zSign = z / abs(z);
-			float zPowered = powf( abs(z), power );
-
-			// Calculate point on superellipse
-			float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
-			float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
-
-			// Scale by circle radius to get world position. Also multiply by the
-			// original sign of the respective components to compensate for removed signs.
-			XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
-			XMVECTOR posVS = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
-
-			lights[i].PositionVS = (float*)&posVS;
-			lights[i].Color = colors[i];
-			lights[i].Radius = lightRadius;
-			lights[i].Intensity = lightIntensity;
-		}
-	}
+	// Write light data to GPU buffer
+	D3D11_MAPPED_SUBRESOURCE mappedData;
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
+	ID3D11Resource *resource;
+	mPointLightsSRV->GetResource( &resource );
+	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
+	memcpy( mappedData.pData, mPointLights.data(), sizeof( PointLight ) * mPointLights.size() );
+	pd3dImmediateContext->Unmap( resource, 0 );
+	SAFE_RELEASE( resource );
 
 	pd3dImmediateContext->OMSetRenderTargets( 0, 0, 0 );
 
@@ -1693,13 +1738,10 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
 	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( mHDRUAV );
 	
-	//int lightCount = mTestLights.size();
-	//if (lightCount > 1024)
-	//	lightCount = 1024;
-	int lightCount = 10;
-	//mTiledDeferredFX->GetVariableByName("gLights")->AsConstantBuffer()->SetRawValue( mTestLights.data(), sizeof(TestLight) * mTestLights.size(), mTestLights.size() );
-	//mTiledDeferredFX->GetVariableByName("gLights")->AsConstantBuffer()->SetRawValue( lights, sizeof(TestLight) * 10, 10 );
-	mTiledDeferredFX->GetVariableByName("gLights")->SetRawValue( lights, 0, sizeof(TestLight) * 10 );
+	int lightCount = mPointLights.size();
+	if (lightCount > 1024)
+		lightCount = 1024;
+	mTiledDeferredFX->GetVariableByName("gLights")->AsShaderResource()->SetResource( mPointLightsSRV );
 	mTiledDeferredFX->GetVariableByName("gLightCount")->AsScalar()->SetInt( lightCount );
 
 	mTiledDeferredFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix( (float*)&mCamera.Proj() );

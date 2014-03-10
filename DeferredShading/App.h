@@ -75,7 +75,7 @@ public:
 	bool Init( );
 
 private:
-	struct TestLight
+	struct PointLight
 	{
 		XMFLOAT3 PositionVS;
 		float Radius;
@@ -111,6 +111,9 @@ private:
 	void RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
 
 	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt );
+
+	HRESULT CreateLightBuffers( ID3D11Device *pd3dDevice );
+	void AnimateLights( float fTime );
 
 private:
 	Model *mBth;
@@ -204,7 +207,8 @@ private:
 
 	PostProcessRT *mPostProcessRT;
 
-	std::vector<TestLight> mTestLights;
+	std::vector<PointLight> mPointLights;
+	ID3D11ShaderResourceView *mPointLightsSRV;
 };
 
 #endif // _APP_H_

@@ -17,7 +17,7 @@ struct GBuffer
 	float SpecularPower;
 };
 
-struct Light
+struct PointLight
 {
 	float3 PositionVS;
 	float Radius;
@@ -25,8 +25,7 @@ struct Light
 	float Intensity;
 };
 int gLightCount;
-//StructuredBuffer<Light> gLights;
-Light gLights[10]; // TODO: Ändra till ovan. Då måste jag fixa med buffrar och sånt i c++ kod. Är det kanske nu man använder map och sånt för att uppdatera buffern?
+StructuredBuffer<PointLight> gLights;
 
 float4x4 gProj;
 float4x4 gInvProj;
@@ -39,7 +38,7 @@ groupshared uint maxDepth;
 groupshared uint visibleLightCount;
 groupshared uint visibleLightIndices[1024];
 
-float3 EvaluateLightDiffuse( Light light, GBuffer gbuffer )
+float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 {
 	// Surface-to-light vector
 	float3 lightVector = light.PositionVS - gbuffer.PosVS;
@@ -188,7 +187,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		lightIndex = min( lightIndex, gLightCount );
 		
 		// Intersection code begin
-		Light light = gLights[lightIndex];
+		PointLight light = gLights[lightIndex];
 			// Position already in VS :)
 		bool inFrustum = true;
 		[unroll]
@@ -229,9 +228,9 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	for (uint lightIt = 0; lightIt < visibleLightCount; ++lightIt)
 	{
 		uint lightIndex = visibleLightIndices[lightIt];
-		Light light = gLights[lightIndex];
+		PointLight light = gLights[lightIndex];
 
-		color += gbuffer.Diffuse * EvaluateLightDiffuse( light, gbuffer );
+		color += gbuffer.Diffuse * EvaluatePointLightDiffuse( light, gbuffer );
 		//color += diffuseAlbedo * evaluateLightDiffuse( light, gbuffer );
 		//color += specularAlbedo * evaluateLightSpecular( light, gbuffer );
 	}
