@@ -83,6 +83,17 @@ private:
 		float Intensity;
 	};
 
+	struct SpotLight
+	{
+		XMFLOAT3 DirectionVS;
+		float CosOuter;
+		float CosInner;
+		XMFLOAT3 Color;
+		XMFLOAT3 PositionVS;
+		float RangeRcp;
+		float Intensity;
+	};
+
 private:
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
@@ -209,6 +220,8 @@ private:
 
 	std::vector<PointLight> mPointLights;
 	ID3D11ShaderResourceView *mPointLightsSRV;
+	std::vector<SpotLight> mSpotLights;
+	ID3D11ShaderResourceView *mSpotLightsSRV;
 };
 
 #endif // _APP_H_

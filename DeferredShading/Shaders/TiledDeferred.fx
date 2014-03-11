@@ -1,5 +1,3 @@
-// 1 tråd per pixel, 16x16 trådgrupper (tile)
-
 // Input
 Texture2D<float4> gColorMap : register( t0 );
 Texture2D<float4> gNormalMap : register( t1 );
@@ -24,8 +22,23 @@ struct PointLight
 	float3 Color;
 	float Intensity;
 };
-int gLightCount;
-StructuredBuffer<PointLight> gLights;
+
+struct SpotLight
+{
+	float3 DirectionVS;
+	float CosOuter;
+	float CosInner;
+	float3 Color;
+	float3 PositionVS;
+	float RangeRcp;
+	float Intensity;
+};
+
+// TODO: Alla ljus i samma buffer?
+int gPointLightCount;
+int gSpotLightCount;
+StructuredBuffer<PointLight> gPointLights;
+StructuredBuffer<SpotLight> gSpotLights;
 
 float4x4 gProj;
 float4x4 gInvProj;
@@ -35,8 +48,10 @@ float gBackbufferHeight;
 groupshared uint minDepth;
 groupshared uint maxDepth;
 
-groupshared uint visibleLightCount;
-groupshared uint visibleLightIndices[1024];
+groupshared uint visiblePointLightCount;
+groupshared uint visiblePointLightIndices[1024];
+groupshared uint visibleSpotLightCount;
+groupshared uint visibleSpotLightIndices[1024];
 
 float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 {
@@ -69,6 +84,70 @@ float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 	return float3( attenuation * light.Intensity * diffuseLight + attenuation * light.Intensity * specularLight );
 }
 
+float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
+{
+	float3 toLight = light.PositionVS - gbuffer.PosVS;
+	float distToLight = length( toLight );
+	toLight /= distToLight; // Normalize
+
+	// Linear distance attenuation
+	float distAtt = saturate( 1.0f - distToLight * light.RangeRcp );
+
+	// Cone attenuation
+	// Angle between lightvector and spot direction (dot) within inner cone: Full
+	// attenuation. Outside outer cone: zero attenuation. Between: decrease from
+	// 1 to 0.
+	float coneAtt = smoothstep( light.CosOuter, light.CosInner, dot( light.DirectionVS, -toLight ) );
+
+	// Diffuse light
+	float NdL = saturate( dot( gbuffer.Normal, toLight ) );
+	float3 diffuseLight = light.Intensity * NdL * light.Color;
+
+	// Reflection vector
+	float3 reflectionVector = normalize( reflect( -toLight, gbuffer.Normal ) );
+
+	// Camera-to-surface vector (in VS camera position is origin)
+	float3 directionToCamera = normalize( -gbuffer.PosVS );
+
+	// Specular light
+	float x = saturate( dot( reflectionVector, directionToCamera ) ) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float specularLight = gbuffer.SpecularIntensity * pow(x, gbuffer.SpecularPower);
+
+	// Take attenuation into account
+	// TODO: Separate specular from diffuse...
+	return distAtt * coneAtt * diffuseLight + distAtt * coneAtt * specularLight;
+}
+
+bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
+{
+	bool inFrustum = true;
+	[unroll]
+	for (uint i = 0; i < 6; ++i)
+	{
+		float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		inFrustum = inFrustum && (-light.Radius <= dist);
+	}
+
+	return inFrustum;
+}
+
+bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
+{
+	// In lack of better, use sphere/frustum intersection.
+	float range = 1 / light.RangeRcp;
+
+	bool inFrustum = true;
+	[unroll]
+	for (uint i = 0; i < 6; ++i)
+	{
+		float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		inFrustum = inFrustum && (-range <= dist);
+	}
+
+	return inFrustum;
+}
+
+// One pixel per thread, 16x16 thread groups (= 1 tile).
 #define BLOCK_SIZE 16
 [numthreads(BLOCK_SIZE, BLOCK_SIZE, 1)]
 void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
@@ -77,16 +156,14 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// Step 1 - Load gbuffers and depth
 	GBuffer gbuffer;
 
-	// TODO: Depth är inte linjärt direkt när man laddar, men det kanske inte behövs
 	float depth = gDepthMap.Load( uint3( dispatchThreadID.xy, 0 ) ).r;
 	float4 diffuse_specIntensity = gColorMap.Load( uint3( dispatchThreadID.xy, 0 ) );
 	float4 normal_specPower = gNormalMap.Load( uint3( dispatchThreadID.xy, 0 ) );
 
-	// Reconstruct position from depth
+	// Reconstruct view space position from depth
 	float x = (dispatchThreadID.x / gBackbufferWidth) * 2 - 1;
 	float y = (1 - dispatchThreadID.y / gBackbufferHeight) * 2 - 1;
-	float4 posH = float4( x, y, depth, 1 );
-	float4 posVS = mul( posH, gInvProj );
+	float4 posVS = mul( float4( x, y, depth, 1 ), gInvProj );
 	posVS /= posVS.w;
 	
 	gbuffer.PosVS = posVS.xyz;
@@ -98,7 +175,8 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// Initialize group shared memory
 	if (groupIndex == 0)
 	{
-		visibleLightCount = 0;
+		visiblePointLightCount = 0;
+		visibleSpotLightCount = 0;
 		minDepth = 0xFFFFFFFF;
 		maxDepth = 0;
 	}
@@ -172,10 +250,22 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		frustumPlanes[i] *= rcp( length( frustumPlanes[i].xyz ) );
 	}
 
+	// TODO:
+	// Det jag gör nu är lite av en naiv lösning. Jag låter trådar culla ljus precis som
+	// vanligt. Om det är fler ljus än trådar körs flera iterationer till alla ljus är cullade.
+	// Därefter gör jag samma sak fast för spot light. "Problemet", om man kan kalla det så,
+	// ligger i att de första trådarna arbetar med första ljustypen, till alla är cullade, 
+	// varpå trådarna börjar med nästa typ. Under tiden som en ljustyp cullas sitter oanvända
+	// trådar bara och väntar. Det hade varit bra om de som inte används (när det är fler trådar
+	// än ljus som ska cullas) kunde börja culla nästa ljustyp istället. Jag vet dock inte hur
+	// detta ska göras om man ska undvika massa if-satser och bara kunna köra allt seriellt.
+	// Det är ju trots allt andra funktioner som ska köras för intersektionstest. Liknande
+	// gäller nedan där ljusen summeras.
+	// Cull lights against computed frustum
 	uint threadCount = BLOCK_SIZE * BLOCK_SIZE;
-	uint passCount = (gLightCount + threadCount - 1) / threadCount;
-
-	for (uint passIt = 0; passIt < passCount; ++passIt)
+	uint passCount = (gPointLightCount + threadCount - 1) / threadCount;
+	uint passIt;
+	for (passIt = 0; passIt < passCount; ++passIt)
 	{
 		uint lightIndex = passIt * threadCount + groupIndex;
 
@@ -184,35 +274,32 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		// egenskaper som alltid misslyckas intersection med frustum (och gärna
 		// snabbt). Det betyder att ljuset aldrig ens kommer beräknas på senare,
 		// även om det inte skulle påverka resultat. Men vi sparar in lite beräkningar.
-		lightIndex = min( lightIndex, gLightCount );
+		lightIndex = min( lightIndex, gPointLightCount );
 		
-		// Intersection code begin
-		PointLight light = gLights[lightIndex];
-			// Position already in VS :)
-		bool inFrustum = true;
-		[unroll]
-		for (uint i = 0; i < 6; ++i)
-		{
-			float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
-			inFrustum = inFrustum && (-light.Radius <= dist);
-		}
-
-		if (inFrustum)
+		PointLight light = gPointLights[lightIndex];
+		
+		if (IntersectPointLightTile( light, frustumPlanes ))
 		{
 			uint offset;
-			InterlockedAdd( visibleLightCount, 1, offset );
-			visibleLightIndices[offset] = lightIndex;
+			InterlockedAdd( visiblePointLightCount, 1, offset );
+			visiblePointLightIndices[offset] = lightIndex;
 		}
-		// Intersection code end
+	}
 
-		//if (intersects(gLights[lightIndex], tile))
-		//{
-		//	uint offset;
-		//	InterlockedAdd(visibleLightCount, 1, offset);
-		//	visibleLightIndices[offset] = lightIndex;
-		//}
-		//visibleLightCount = gLightCount; // TODO: remove
-		//visibleLightIndices[lightIndex] = lightIndex; // TODO: remove
+	passCount = (gSpotLightCount + threadCount - 1) / threadCount;
+	for (passIt = 0; passIt < passCount; ++passIt)
+	{
+		uint lightIndex = passIt * threadCount + groupIndex;
+		lightIndex = min( lightIndex, gSpotLightCount );
+
+		SpotLight light = gSpotLights[lightIndex];
+
+		if (IntersectSpotLightTile( light, frustumPlanes ))
+		{
+			uint offset;
+			InterlockedAdd( visibleSpotLightCount, 1, offset );
+			visibleSpotLightIndices[offset] = lightIndex;
+		}
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -225,14 +312,23 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	
 	float3 color = 0.3f * gbuffer.Diffuse; // Ambient
 	
-	for (uint lightIt = 0; lightIt < visibleLightCount; ++lightIt)
+	uint lightIt;
+	for (lightIt = 0; lightIt < visiblePointLightCount; ++lightIt)
 	{
-		uint lightIndex = visibleLightIndices[lightIt];
-		PointLight light = gLights[lightIndex];
+		uint lightIndex = visiblePointLightIndices[lightIt];
+		PointLight light = gPointLights[lightIndex];
 
 		color += gbuffer.Diffuse * EvaluatePointLightDiffuse( light, gbuffer );
 		//color += diffuseAlbedo * evaluateLightDiffuse( light, gbuffer );
 		//color += specularAlbedo * evaluateLightSpecular( light, gbuffer );
+	}
+
+	for (lightIt = 0; lightIt < visibleSpotLightCount; ++lightIt)
+	{
+		uint lightIndex = visibleSpotLightIndices[lightIt];
+		SpotLight light = gSpotLights[lightIndex];
+
+		color += gbuffer.Diffuse * EvaluateSpotLightDiffuse( light, gbuffer );
 	}
 
 	gOutputTexture[dispatchThreadID.xy] = float4( color, 1 );
