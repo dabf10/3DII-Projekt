@@ -79,6 +79,9 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
 		return E_FAIL;
 
+	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Flamingo_Final_1_Default_diffuse.dds", 0, 0, &mFlamingoColor, 0)))
+		return E_FAIL;
+
 	mLevel = new Model();
 	if (!mLevel->LoadOBJ( "Map.obj", true, pd3dDevice ) )
 		return E_FAIL;
@@ -94,9 +97,9 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 		if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, textures[i], 0, 0, &mLevelSRV[i], 0 ) ) )
 			return E_FAIL;
 	}
-	
-	mAnimatedModel = new SkinnedData();
-	mAnimatedModel->LoadAnimation("Flamingo_Final_1.GNOME");
+
+	mFlamingoModel = new AnimatedModel();
+	mFlamingoModel->LoadGnome("Flamingo_Final_1.GNOME", pd3dDevice);
 
 	mSphereModel = new Model();
 	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice ) )
@@ -171,8 +174,10 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_DELETE(mLevel);
 	SAFE_DELETE(mSphereModel);
 	SAFE_DELETE(mConeModel);
+	SAFE_DELETE(mFlamingoModel);
 
 	SAFE_RELEASE( mBthColor );
+	SAFE_RELEASE(mFlamingoColor);
 	SAFE_RELEASE( mSphereSRV );
 	for (int i = 0; i < 3; ++i)
 	{
@@ -336,12 +341,13 @@ bool App::Init( )
 	world = scale * rotation * translation;
 	XMStoreFloat4x4( &mLevelWorld, world );
 
-	//load modelX
-	gnomeImporter importer = gnomeImporter();
-	std::vector<gnomeImporter::material> materials = std::vector<gnomeImporter::material>();
-	std::vector<gnomeImporter::vertex> vertices;
-	std::vector<int> hest;
-	importer.getVectors("Flamingo_Final_1.GNOME", materials, vertices, hest);
+	//Flamingo world
+	uniformScaleFactor = 0.009f;
+	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
+	rotation = XMMatrixRotationX(XMConvertToRadians(90));
+	translation = XMMatrixTranslation(0.0f, 0.5f, 25.0f);
+	world = scale * rotation * translation;
+	XMStoreFloat4x4(&mFlamingoWorld, world);
 
 	return true;
 }
@@ -427,6 +433,21 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mBth->Render( pd3dImmediateContext );
 		
 		//
+		// Flamingo
+		//
+		world = XMLoadFloat4x4(&mFlamingoWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFlamingoColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFlamingoModel->Render( pd3dImmediateContext );
+
+		//
 		// Level
 		//
 
@@ -504,6 +525,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		//mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
 		//mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		//mConeModel->Render( pd3dImmediateContext );
+
+
 	}
 
 	//

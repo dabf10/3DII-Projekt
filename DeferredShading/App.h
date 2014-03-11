@@ -6,6 +6,7 @@
 #include "SDKmisc.h"
 #include "DXUTsettingsdlg.h"
 #include "Model.h"
+#include "AnimatedModel.h"
 #include "Camera.h"
 #include "SSAO.h"
 #include "GBuffer.h"
@@ -115,6 +116,10 @@ private:
 
 	Model *mConeModel;
 	XMFLOAT4X4 mConeWorld;
+
+	AnimatedModel* mFlamingoModel;
+	XMFLOAT4X4 mFlamingoWorld;
+	ID3D11ShaderResourceView* mFlamingoColor;
 
 	ID3D11ShaderResourceView *mProjPointLightColor;
 	ID3D11ShaderResourceView *mProjSpotlightColor;

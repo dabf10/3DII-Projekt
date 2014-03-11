@@ -379,6 +379,7 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AnimatedModel.cpp" />
     <ClCompile Include="GBuffer.cpp" />
     <ClCompile Include="GnomeImporter.cpp" />
     <ClCompile Include="Main.cpp" />
@@ -387,6 +388,7 @@
     <ClCompile Include="PostProcessRT.cpp" />
     <ClCompile Include="SkinnedData.cpp" />
     <ClCompile Include="SSAO.cpp" />
+    <ClInclude Include="AnimatedModel.h" />
     <ClInclude Include="GBuffer.h" />
     <ClInclude Include="GnomeImporter.h" />
     <ClInclude Include="PostProcessRT.h" />
