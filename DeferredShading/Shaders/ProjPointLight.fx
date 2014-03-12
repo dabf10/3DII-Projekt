@@ -4,8 +4,7 @@ float4x4 gWorldView;
 float3 gLightPositionVS;
 float gLightRadius;
 float gLightIntensity;
-float gProjA;
-float gProjB;
+float4x4 gProj;
 
 Texture2D gColorMap;
 Texture2D gNormalMap;
@@ -61,7 +60,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Sample the depth and convert to linear view space Z (assume it gets
 	// samples as a floating point value in the range [0,1])
 	float depth = gDepthMap.Sample( gSamPoint, texCoord ).r;
-	float linearDepth = gProjB / (depth - gProjA);
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
 	float3 posVS = viewRay * linearDepth;
 
 	// Get normal data from gNormalMap
@@ -113,7 +112,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularLight = specularIntensity * pow(x, y);
 	
 	// Take attenuation and light intensity into account
-	float ambientLight = 0.3f;
+	float ambientLight = 0.0f;
 	return float4( attenuation * gLightIntensity * color.rgb * (diffuseLight + ambientLight) + attenuation * gLightIntensity * specularLight, 1 );
 }
 

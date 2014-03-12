@@ -6,6 +6,11 @@ Texture2D<float4> gDepthMap : register( t2 );
 // Output
 RWTexture2D<float4> gOutputTexture : register( u0 ); // Full ihopsatt och ljussatt HDR textur
 
+float4x4 gProj;
+float4x4 gInvProj;
+float gBackbufferWidth;
+float gBackbufferHeight;
+
 struct GBuffer
 {
 	float3 Diffuse;
@@ -51,11 +56,6 @@ StructuredBuffer<PointLight> gPointLights;
 StructuredBuffer<SpotLight> gSpotLights;
 StructuredBuffer<CapsuleLight> gCapsuleLights;
 
-float4x4 gProj;
-float4x4 gInvProj;
-float gBackbufferWidth;
-float gBackbufferHeight;
-
 groupshared uint minDepth;
 groupshared uint maxDepth;
 
@@ -94,7 +94,7 @@ float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 
 	// Take attenuation and light intensity into account
 	// TODO: Separate specular from diffuse...
-	return float3( attenuation * light.Intensity * diffuseLight + attenuation * light.Intensity * specularLight );
+	return attenuation * light.Intensity * (diffuseLight + specularLight);
 }
 
 float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
@@ -128,7 +128,7 @@ float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 
 	// Take attenuation into account
 	// TODO: Separate specular from diffuse...
-	return distAtt * coneAtt * diffuseLight + distAtt * coneAtt * specularLight;
+	return distAtt * coneAtt * (diffuseLight + specularLight);
 }
 
 float3 EvaluateCapsuleLightDiffuse( CapsuleLight light, GBuffer gbuffer )
@@ -166,8 +166,9 @@ float3 EvaluateCapsuleLightDiffuse( CapsuleLight light, GBuffer gbuffer )
 
 	// Linear distance attenuation
 	float attenuation = saturate(1.0f - distToLight * light.RangeRcp);
-
-	return attenuation * diffuseLight + attenuation * specularLight;
+	
+	// TODO: Separate specular from diffuse...
+	return attenuation * (diffuseLight + specularLight);
 }
 
 bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
@@ -183,9 +184,9 @@ bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
 	return inFrustum;
 }
 
+// Note: Sphere/plane.
 bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 {
-	// In lack of better, use sphere/frustum intersection.
 	float range = 1 / light.RangeRcp;
 
 	bool inFrustum = true;
@@ -244,7 +245,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	
 	gbuffer.PosVS = posVS.xyz;
 	gbuffer.Diffuse = diffuse_specIntensity.rgb;
-	gbuffer.Normal = 2.0f * normal_specPower.xyz - 1.0f;
+	gbuffer.Normal = normalize(2.0f * normal_specPower.xyz - 1.0f);
 	gbuffer.SpecularIntensity = diffuse_specIntensity.a;
 	gbuffer.SpecularPower = normal_specPower.a * 255;
 
@@ -275,38 +276,17 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	float minGroupDepth = asfloat( minDepth );
 	float maxGroupDepth = asfloat( maxDepth );
 
-	// Step 3 - Culling
-	// Determine visible light sources for each tile
-	// * Cull all light sources against tile frustum (jag antar att de olika trådarna
-	// kan culla vars ett ljus i listan tills alla ljus är cullade)
-	// Input (global): Light list (frustum and SW occlusion culled, (pure list for me)
-	// Output (per tile):
-	// * # of visible light sources
-	// * Index list of visible light sources
-	// ------------------|-Lights---|--Indices----------------------
-	// Global list		 |	1000+	 |	0 1 2 3 4 5 6 7 8 ..		|
-	// Tile visible list |	~0-40+	 |  0 2 5 6 8 ..				|
-	// --------------------------------------------------------------
+	// Step 3 - Cull light sources against tile frustum
 
-	// 3a: Each thread switches to process lights instead of pixels
-	// - 256 lights sources in parallell
-	// - Multiple iterations for > 256 lights
-	// 3b: Intersect light and tile
-	// - Tile min and max z is used as a "depth bounds" test
-	// 3c: Append visible light indices to list
-	// - Atomic add to threadgroup shared memory
-	// 3d: Switch back to processing pixels
-	// - Synchronize thread group
-	// - We now know which light sources affect the tile
-
-	// Calculate tile frustum
+	// Calculate tile frustum. Tile min and max z is used as a "depth bounds" test.
 	// Extrahering av plan kan ses i RTR (s.774), där skillnaden är att kolumner
 	// används istället för rader eftersom DX är vänsterorienterat. Här bryr vi
 	// oss inte om att negera planen eftersom vi vill att de ska peka in i frustum.
 	// Enbart projektionsmatrisen används eftersom vi då kommer arbeta i view space.
 	// Vidare är de använda kolumnerna modifierade för rutans frustum.
+	// TODO: Jag har inte hittat härledning till varför man kan modifiera projektions-
+	// matris så här. Also: Varför 2 * BLOCK_SIZE? Det borde framstå ur härledning...
 	float4 frustumPlanes[6];
-	// TODO: Bara BLOCK_SIZE istället för 2 * ?
 	float2 tileScale = float2(gBackbufferWidth, gBackbufferHeight) * rcp( float( 2 * BLOCK_SIZE ) );
 	float2 tileBias = tileScale - float2( groupID.xy );
 	float4 col1 = float4( gProj._11 * tileScale.x, 0.0f, tileBias.x, 0.0f );
@@ -330,7 +310,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// TODO:
 	// Det jag gör nu är lite av en naiv lösning. Jag låter trådar culla ljus precis som
 	// vanligt. Om det är fler ljus än trådar körs flera iterationer till alla ljus är cullade.
-	// Därefter gör jag samma sak fast för spot light. "Problemet", om man kan kalla det så,
+	// Därefter gör jag samma sak fast för nästa ljustyp. "Problemet", om man kan kalla det så,
 	// ligger i att de första trådarna arbetar med första ljustypen, till alla är cullade, 
 	// varpå trådarna börjar med nästa typ. Under tiden som en ljustyp cullas sitter oanvända
 	// trådar bara och väntar. Det hade varit bra om de som inte används (när det är fler trådar
@@ -338,19 +318,21 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// detta ska göras om man ska undvika massa if-satser och bara kunna köra allt seriellt.
 	// Det är ju trots allt andra funktioner som ska köras för intersektionstest. Liknande
 	// gäller nedan där ljusen summeras.
-	// Cull lights against computed frustum
+
+	// Cull lights against computed frustum. We use multiple passes when we have
+	// more light than threads. The indices of the visible lights are appended to
+	// a list. An atomic add keeps track of the how many lights are visible.
 	uint threadCount = BLOCK_SIZE * BLOCK_SIZE;
-	uint passCount = (gPointLightCount + threadCount - 1) / threadCount;
+	uint passCount;
 	uint passIt;
+
+	// Point lights
+	passCount = (gPointLightCount + threadCount - 1) / threadCount;
 	for (passIt = 0; passIt < passCount; ++passIt)
 	{
 		uint lightIndex = passIt * threadCount + groupIndex;
 
 		// Prevent overrun by clamping to a last "null" light
-		// TODO: När vi clampar till null-ljus vill vi se till att ljuset har
-		// egenskaper som alltid misslyckas intersection med frustum (och gärna
-		// snabbt). Det betyder att ljuset aldrig ens kommer beräknas på senare,
-		// även om det inte skulle påverka resultat. Men vi sparar in lite beräkningar.
 		lightIndex = min( lightIndex, gPointLightCount );
 		
 		PointLight light = gPointLights[lightIndex];
@@ -363,6 +345,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		}
 	}
 
+	// Spotlights
 	passCount = (gSpotLightCount + threadCount - 1) / threadCount;
 	for (passIt = 0; passIt < passCount; ++passIt)
 	{
@@ -381,6 +364,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		}
 	}
 
+	// Capsule lights
 	passCount = (gCapsuleLightCount + threadCount - 1) / threadCount;
 	for (passIt = 0; passIt < passCount; ++passIt)
 	{
@@ -401,15 +385,13 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 
 	GroupMemoryBarrierWithGroupSync();
 
-	// 4: For each pixel, accumulate lighting from visible lights
-	// - Read from tile visible light index list in groupshared memory
-
-	// 5: Combine lighting and shading albedos
-	// - Output is non-MSAA HDR texture
+	// Step 4 - Switching back to processing pixels. Accumulate lighting from the
+	// visible lights calculated earlier and combine with color data.
 	
-	float3 color = 0.3f * gbuffer.Diffuse; // Ambient
-	
+	float3 color = 1.3f * gbuffer.Diffuse; // Ambient
 	uint lightIt;
+
+	// Point lights
 	for (lightIt = 0; lightIt < visiblePointLightCount; ++lightIt)
 	{
 		uint lightIndex = visiblePointLightIndices[lightIt];
@@ -420,6 +402,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		//color += specularAlbedo * evaluateLightSpecular( light, gbuffer );
 	}
 
+	// Spotlights
 	for (lightIt = 0; lightIt < visibleSpotLightCount; ++lightIt)
 	{
 		uint lightIndex = visibleSpotLightIndices[lightIt];
@@ -428,6 +411,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		color += gbuffer.Diffuse * EvaluateSpotLightDiffuse( light, gbuffer );
 	}
 
+	// Capsule lights
 	for (lightIt = 0; lightIt < visibleCapsuleLightCount; ++lightIt)
 	{
 		uint lightIndex = visibleCapsuleLightIndices[lightIt];

@@ -194,6 +194,7 @@ private:
 
 	ID3DX11Effect *mFillGBufferFX;
 
+	ID3DX11Effect *mAmbientLightFX;
 	ID3DX11Effect *mDirectionalLightFX;
 	ID3DX11EffectTechnique *mDirectionalLightTech;
 	ID3DX11Effect *mPointLightFX;

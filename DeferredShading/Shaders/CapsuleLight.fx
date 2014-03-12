@@ -12,6 +12,15 @@ Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
 Texture2D gDepthMap;
 
+struct GBuffer
+{
+	float3 Diffuse;
+	float3 Normal;
+	float3 PosVS;
+	float SpecularIntensity;
+	float SpecularPower;
+};
+
 // Full screen triangle at first try to get light up and running.
 // Improve later with proper volume and change vertex shader accordingly.
 struct VS_OUT
@@ -33,31 +42,9 @@ VS_OUT VS( uint VertexID : SV_VertexID )
 	return output;
 }
 
-float4 PS( VS_OUT input ) : SV_TARGET
+float3 EvaluateCapsuleLight( GBuffer gbuffer )
 {
-	// Get normal data from gNormalMap
-	float4 normalData = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
-	// Transform normal back into [-1,1] range
-	float3 normal = normalize(2.0f * normalData.xyz - 1.0f);
-
-	// Get specular power
-	float specularPower = normalData.a * 255;
-
-	// Get specular intensity from gColorMap
-	float4 color = gColorMap.Load( uint3( input.PosH.xy, 0 ) );
-	float specularIntensity = color.a;
-	
-	// Clamp view ray to the plane at Z = 1
-	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
-
-	// Read depth
-	float depth = gDepthMap.Load( uint3( input.PosH.xy, 0 ) ).r;
-	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
-	float3 posVS = viewRay * linearDepth;
-
-	// ------------------------------------
-
-	float3 toCapsuleStart = posVS - gLightPositionVS;
+	float3 toCapsuleStart = gbuffer.PosVS - gLightPositionVS;
 
 	// Project start-to-fragment onto light direction to get distance from
 	// light position to closest point on the line (dot product). If this value
@@ -71,29 +58,52 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float distOnLine = dot( toCapsuleStart, gLightDirectionVS ) / gLightLength;
 	distOnLine = saturate(distOnLine) * gLightLength;
 	float3 pointOnLine = gLightPositionVS + gLightDirectionVS * distOnLine;
-	float3 toLight = pointOnLine - posVS;
+	float3 toLight = pointOnLine - gbuffer.PosVS;
 	float distToLight = length(toLight);
 
 	// Diffuse light
 	toLight /= distToLight; // Normalize
-	float NdL = saturate(dot(toLight, normal));
+	float NdL = saturate(dot(toLight, gbuffer.Normal));
 	float3 diffuseLight = gLightIntensity * NdL * gLightColor;
 
-	float3 reflectionVector = normalize(reflect(-toLight, normal));
+	float3 reflectionVector = normalize(reflect(-toLight, gbuffer.Normal));
 
 	// Camera-to-surface vector (in VS camera position is zero)
-	float3 directionToCamera = normalize(-posVS);
+	float3 directionToCamera = normalize(-gbuffer.PosVS);
 
 	// Specular light
 	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
-	float y = specularPower;
-	float specularLight = specularIntensity * pow(x, y);
+	float specularLight = gbuffer.SpecularIntensity * pow(x, gbuffer.SpecularPower);
 
 	// Linear distance attenuation
 	float attenuation = saturate(1.0f - distToLight * gLightRangeRcp);
 
-	float3 ambientLight = float3( 0.3f, 0.3f, 0.3f );
-	return float4( attenuation * color.rgb * (diffuseLight + ambientLight) + attenuation * specularLight, 1 );
+	return attenuation * (diffuseLight + specularLight);
+}
+
+float4 PS( VS_OUT input ) : SV_TARGET
+{
+	GBuffer gbuffer;
+
+	float depth = gDepthMap.Load( uint3( input.PosH.xy, 0 ) ).r;
+	float4 diffuse_specIntensity = gColorMap.Load( uint3( input.PosH.xy, 0 ) );
+	float4 normal_specPower = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
+
+	// Reconstruct view space position
+	// Clamp view ray to the plane at Z = 1
+	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
+	float3 posVS = viewRay * linearDepth;
+
+	gbuffer.PosVS = posVS;
+	gbuffer.Diffuse = diffuse_specIntensity.rgb;
+	gbuffer.Normal = normalize(2.0f * normal_specPower.xyz - 1.0f); // Transform back into [-1,1] range
+	gbuffer.SpecularIntensity = diffuse_specIntensity.a;
+	gbuffer.SpecularPower = normal_specPower.a * 255;
+
+	// ------------------------------------------------
+
+	return float4( gbuffer.Diffuse * EvaluateCapsuleLight( gbuffer ), 1 );
 }
 
 technique11 Technique0

@@ -148,6 +148,9 @@
     <None Include="Shaders\TiledDeferred.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\AmbientLight.fx">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">

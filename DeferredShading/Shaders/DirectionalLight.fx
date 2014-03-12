@@ -3,11 +3,11 @@
 // the specular light (which will always be considered white), to the alpha channel.
 // ############################################################################
 
+float4x4 gProj;
+float4x4 gInvProj;
+
 float3 gLightDirectionVS;
 float3 gLightColor;
-float gProjA;
-float gProjB;
-float4x4 gInvProj;
 float gLightIntensity;
 
 // G-Buffer textures
@@ -15,25 +15,13 @@ Texture2D gColorMap; // Diffuse + specular intensity in alpha
 Texture2D gNormalMap; // Normals + specular power in alpha
 Texture2D gDepthMap;
 
-SamplerState gColorSampler
+struct GBuffer
 {
-	Filter = MIN_MAG_MIP_LINEAR;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gDepthSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gNormalSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
+	float3 Diffuse;
+	float3 Normal;
+	float3 PosVS;
+	float SpecularIntensity;
+	float SpecularPower;
 };
 
 struct VS_OUT
@@ -62,68 +50,50 @@ VS_OUT VS( uint VertexID : SV_VertexID )
 	return output;
 }
 
-float4 PS( VS_OUT input ) : SV_TARGET
+float3 EvaluateDirectionalLight( GBuffer gbuffer )
 {
-	// Get the data we need out of the G-Buffer.
-
-	float4 normalData = gNormalMap.Sample( gNormalSampler, input.TexC );
-	// Transform normal back into [-1,1] range
-	float3 normal = 2.0f * normalData.xyz - 1.0f;
-	// Get specular power, and transform into [0,255] range
-	float specularPower = normalData.a * 255;
-
-	// Get specular intensity from gColorMap.
-	float4 color = gColorMap.Sample( gColorSampler, input.TexC );
-	float specularIntensity = color.a;
-
-	// For specular lighting, we need to have the vector from the camera to the
-	// point being shaded, alas, we need the position. Right now we have the
-	// depth in gDepthMap, which can be used to construct view space position.
-
-	// Read depth
-	float depth = gDepthMap.Sample( gDepthSampler, input.TexC ).r;
-	float linearDepth = gProjB / (depth - gProjA);
-	float3 posVS = input.ViewRay * linearDepth;
-
-	// After we compute the vector from the surface to the light (which in this
-	// case is the negated gLightDirection), we compute the diffuse light with
-	// the dot product between the normal and the light vector. The specular light
-	// is computed using the dot product between the light reflection vector and
-	// the camera-to-object vector. The output will contain the diffuse light in
-	// the RGB channels, and the specular light in the A channel.
-
 	// Surface-to-light
 	float3 lightVector = -normalize(gLightDirectionVS);
 
 	// Compute diffuse light
-	float NdL = gLightIntensity * max(0, dot(normal, lightVector));
+	float NdL = gLightIntensity * max(0, dot(gbuffer.Normal, lightVector));
 
 	float3 diffuseLight = NdL * gLightColor.rgb;
 
 	// Reflection vector
-	float3 reflectionVector = normalize(reflect(-lightVector, normal));
+	float3 reflectionVector = normalize(reflect(-lightVector, gbuffer.Normal));
 
 	// Camera-to-surface vector (camera position is origin because of view space :) )
-	float3 directionToCamera = normalize(-posVS.xyz);
+	float3 directionToCamera = normalize(-gbuffer.PosVS.xyz);
 
 	// Compute specular light
 	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
-	float y = specularPower;
-	float specularLight = specularIntensity * pow(x, y);
+	float specularLight = gbuffer.SpecularIntensity * pow(x, gbuffer.SpecularPower);
+
+	return diffuseLight + specularLight;
+}
+
+float4 PS( VS_OUT input ) : SV_TARGET
+{
+	GBuffer gbuffer;
+
+	float depth = gDepthMap.Load( uint3( input.PosH.xy, 0 ) ).r;
+	float4 diffuse_specIntensity = gColorMap.Load( uint3( input.PosH.xy, 0 ) );
+	float4 normal_specPower = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
+
+	// Reconstruct view space position
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
+	float3 posVS = input.ViewRay * linearDepth;
+
+	gbuffer.PosVS = posVS;
+	gbuffer.Diffuse = diffuse_specIntensity.rgb;
+	gbuffer.Normal = normalize(2.0f * normal_specPower.xyz - 1.0f); // Transform back into [-1,1] range
+	gbuffer.SpecularIntensity = diffuse_specIntensity.a;
+	gbuffer.SpecularPower = normal_specPower.a * 255;
 
 	// ------------------------------------------
 
-	// TODO: (från CombineLight.fx) Det verkar som att man borde kunna låta ljusshaders returnera
-	// (diffus som vanligt) + specularLight * lightcolor. Då returneras EN färg
-	// och specularLight behöver inte finnas med i lightmap överhuvudtaget.
-	// Det sparar in fjärde kanalen (räcker med RGB) samt att specularlight får
-	// ljusets färg och inte alltid vit. I denna shadern kommer det betyda att
-	// man bara läser in ljus från lightmap som rgb (inget spec i a) som man
-	// multiplicerar med gbufferns färg rakt av. Ljusshaders kommer behöva anpassas
-	// så de returnerar float3
-
-	float ambientLight = 1.3;
-	return float4( color.rgb * (diffuseLight + ambientLight) + specularLight, 1 );
+	return float4( gbuffer.Diffuse * EvaluateDirectionalLight( gbuffer ), 1 );
 }
 
 technique11 Technique0
