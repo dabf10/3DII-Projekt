@@ -34,11 +34,22 @@ struct SpotLight
 	float Intensity;
 };
 
-// TODO: Alla ljus i samma buffer?
+struct CapsuleLight
+{
+	float3 PositionVS;
+	float RangeRcp;
+	float3 DirectionVS;
+	float Length;
+	float3 Color;
+	float Intensity;
+};
+
 int gPointLightCount;
 int gSpotLightCount;
+int gCapsuleLightCount;
 StructuredBuffer<PointLight> gPointLights;
 StructuredBuffer<SpotLight> gSpotLights;
+StructuredBuffer<CapsuleLight> gCapsuleLights;
 
 float4x4 gProj;
 float4x4 gInvProj;
@@ -52,6 +63,8 @@ groupshared uint visiblePointLightCount;
 groupshared uint visiblePointLightIndices[1024];
 groupshared uint visibleSpotLightCount;
 groupshared uint visibleSpotLightIndices[1024];
+groupshared uint visibleCapsuleLightCount;
+groupshared uint visibleCapsuleLightIndices[1024];
 
 float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 {
@@ -118,6 +131,45 @@ float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 	return distAtt * coneAtt * diffuseLight + distAtt * coneAtt * specularLight;
 }
 
+float3 EvaluateCapsuleLightDiffuse( CapsuleLight light, GBuffer gbuffer )
+{
+	float3 toCapsuleStart = gbuffer.PosVS - light.PositionVS;
+
+	// Project start-to-fragment onto light direction to get distance from
+	// light position to closest point on the line (dot product). If this value
+	// is negative, we are outside the line from the start point side, which means
+	// that the start point is the closest point. If it's greater than the light
+	// length (outside line from end point side), the closest point is the end
+	// point. Otherwise it's on the line. The value is normalized by dividing
+	// by the light length, followed by saturation to clamp in [0,1]. Multiplying
+	// this normalized value with the light length, we get correct distance from
+	// start point, taking end points into consideration :)
+	float distOnLine = dot( toCapsuleStart, light.DirectionVS ) / light.Length;
+	distOnLine = saturate(distOnLine) * light.Length;
+	float3 pointOnLine = light.PositionVS + light.DirectionVS * distOnLine;
+	float3 toLight = pointOnLine - gbuffer.PosVS;
+	float distToLight = length(toLight);
+
+	// Diffuse light
+	toLight /= distToLight; // Normalize
+	float NdL = saturate(dot(toLight, gbuffer.Normal));
+	float3 diffuseLight = light.Intensity * NdL * light.Color;
+
+	float3 reflectionVector = normalize(reflect(-toLight, gbuffer.Normal));
+
+	// Camera-to-surface vector (in VS camera position is zero)
+	float3 directionToCamera = normalize(-gbuffer.PosVS);
+
+	// Specular light
+	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float specularLight = gbuffer.SpecularIntensity * pow(x, gbuffer.SpecularPower);
+
+	// Linear distance attenuation
+	float attenuation = saturate(1.0f - distToLight * light.RangeRcp);
+
+	return attenuation * diffuseLight + attenuation * specularLight;
+}
+
 bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
 {
 	bool inFrustum = true;
@@ -142,6 +194,30 @@ bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 	{
 		float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
 		inFrustum = inFrustum && (-range <= dist);
+	}
+
+	return inFrustum;
+}
+
+// This intersection is based on the sphere/plane intersection for point lights. What I do
+// here is get startpoint (one end of line) and calculate endpoint (the other end). Now,
+// since the capsule defines distance from the line, we basically a sphere at each end.
+// Just like with sphere/plane I get the distance from the point to the plane, but I do it
+// for both end points for each plane. If any of those spheres are intersecting the frustum,
+// the whole capsule does.
+bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
+{
+	float4 startPoint = float4( light.PositionVS, 1.0f );
+	float4 endPoint = float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f );
+	float range = 1 / light.RangeRcp;
+
+	bool inFrustum = true;
+	[unroll]
+	for (uint i = 0; i < 6; ++i)
+	{
+		float distStart = dot( frustumPlanes[i], startPoint );
+		float distEnd = dot( frustumPlanes[i], endPoint );
+		inFrustum = inFrustum && ( (-range <= distStart) || (-range <= distEnd) ); // Any of the sphere endpoints inside
 	}
 
 	return inFrustum;
@@ -177,6 +253,7 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	{
 		visiblePointLightCount = 0;
 		visibleSpotLightCount = 0;
+		visibleCapsuleLightCount = 0;
 		minDepth = 0xFFFFFFFF;
 		maxDepth = 0;
 	}
@@ -290,6 +367,8 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	for (passIt = 0; passIt < passCount; ++passIt)
 	{
 		uint lightIndex = passIt * threadCount + groupIndex;
+		
+		// Prevent overrun by clamping to a last "null" light
 		lightIndex = min( lightIndex, gSpotLightCount );
 
 		SpotLight light = gSpotLights[lightIndex];
@@ -299,6 +378,24 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 			uint offset;
 			InterlockedAdd( visibleSpotLightCount, 1, offset );
 			visibleSpotLightIndices[offset] = lightIndex;
+		}
+	}
+
+	passCount = (gCapsuleLightCount + threadCount - 1) / threadCount;
+	for (passIt = 0; passIt < passCount; ++passIt)
+	{
+		uint lightIndex = passIt * threadCount + groupIndex;
+		
+		// Prevent overrun by clamping to a last "null" light
+		lightIndex = min( lightIndex, gCapsuleLightCount );
+
+		CapsuleLight light = gCapsuleLights[lightIndex];
+
+		if (IntersectCapsuleLightTile( light, frustumPlanes ))
+		{
+			uint offset;
+			InterlockedAdd( visibleCapsuleLightCount, 1, offset );
+			visibleCapsuleLightIndices[offset] = lightIndex;
 		}
 	}
 
@@ -329,6 +426,14 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		SpotLight light = gSpotLights[lightIndex];
 
 		color += gbuffer.Diffuse * EvaluateSpotLightDiffuse( light, gbuffer );
+	}
+
+	for (lightIt = 0; lightIt < visibleCapsuleLightCount; ++lightIt)
+	{
+		uint lightIndex = visibleCapsuleLightIndices[lightIt];
+		CapsuleLight light = gCapsuleLights[lightIndex];
+
+		color += gbuffer.Diffuse * EvaluateCapsuleLightDiffuse( light, gbuffer );
 	}
 
 	gOutputTexture[dispatchThreadID.xy] = float4( color, 1 );

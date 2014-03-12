@@ -60,7 +60,8 @@ App::App() :
 	mGBuffer( 0 ),
 	mPostProcessRT( 0 ),
 	mPointLightsSRV( 0 ),
-	mSpotLightsSRV( 0 )
+	mSpotLightsSRV( 0 ),
+	mCapsuleLightsSRV( 0 )
 {
 }
 
@@ -229,6 +230,7 @@ void App::OnD3D11DestroyDevice( )
 
 	SAFE_RELEASE( mPointLightsSRV );
 	SAFE_RELEASE( mSpotLightsSRV );
+	SAFE_RELEASE( mCapsuleLightsSRV );
 }
 
 //--------------------------------------------------------------------------------------
@@ -394,6 +396,13 @@ bool App::Init( )
 	nullSpotLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
 	mSpotLights.push_back( nullSpotLight );
 
+	mCapsuleLights.insert( mCapsuleLights.begin(), 2, CapsuleLight() );
+	CapsuleLight nullCapsuleLight;
+	ZeroMemory( &nullCapsuleLight, sizeof( CapsuleLight ) );
+	nullCapsuleLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
+	mCapsuleLights.push_back( nullCapsuleLight );
+	
+
 	return true;
 }
 
@@ -498,6 +507,32 @@ void App::AnimateLights( float fTime )
 		mSpotLights[0].DirectionVS = (float*)&dirVS;
 		mSpotLights[0].CosInner = cosf( XMConvertToRadians( innerAngleDeg ) );
 		mSpotLights[0].CosOuter = cosf( XMConvertToRadians( outerAngleDeg ) );
+	}
+
+	// Capsule lights
+	{
+		float rangeRcp = 1 / 0.8f;
+		float length = 6.0f;
+		float intensity = 2.0f;
+
+		XMVECTOR dirVS = XMVector4Transform( XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) ), mCamera.View() );
+		XMVECTOR posVS = XMVector3Transform( XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
+		XMStoreFloat3( &mCapsuleLights[0].DirectionVS, dirVS );
+		XMStoreFloat3( &mCapsuleLights[0].PositionVS, posVS );
+
+		mCapsuleLights[0].Color = XMFLOAT3( 1.0f, 0.0f, 0.0f );
+		mCapsuleLights[0].RangeRcp = rangeRcp;
+		mCapsuleLights[0].Length = length;
+		mCapsuleLights[0].Intensity = intensity;
+	
+		posVS = XMVector3Transform( XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
+		XMStoreFloat3( &mCapsuleLights[1].DirectionVS, dirVS );
+		XMStoreFloat3( &mCapsuleLights[1].PositionVS, posVS );
+
+		mCapsuleLights[1].Color = XMFLOAT3( 0.0f, 0.0f, 1.0f );
+		mCapsuleLights[1].RangeRcp = rangeRcp;
+		mCapsuleLights[1].Length = length;
+		mCapsuleLights[1].Intensity = intensity;
 	}
 }
 
@@ -1301,6 +1336,18 @@ HRESULT App::CreateLightBuffers( ID3D11Device *pd3dDevice )
 
 		SAFE_RELEASE( buffy );
 	}
+
+	// Capsule lights
+	{
+		bufDesc.StructureByteStride = sizeof( CapsuleLight );
+		bufDesc.ByteWidth = max(mCapsuleLights.size(), 1) * sizeof( CapsuleLight );
+		V_RETURN( pd3dDevice->CreateBuffer( &bufDesc, NULL, &buffy ) );
+
+		srvDesc.Buffer.NumElements = max(mCapsuleLights.size(), 1);
+		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mCapsuleLightsSRV ) );
+
+		SAFE_RELEASE( buffy );
+	}
 }
 
 void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction, float intensity )
@@ -1776,8 +1823,9 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 
 	// Write light data to GPU buffer
 	D3D11_MAPPED_SUBRESOURCE mappedData;
-	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
 	ID3D11Resource *resource;
+
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
 	mPointLightsSRV->GetResource( &resource );
 	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
 	memcpy( mappedData.pData, mPointLights.data(), sizeof( PointLight ) * mPointLights.size() );
@@ -1788,6 +1836,13 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mSpotLightsSRV->GetResource( &resource );
 	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
 	memcpy( mappedData.pData, mSpotLights.data(), sizeof( SpotLight ) * mSpotLights.size() );
+	pd3dImmediateContext->Unmap( resource, 0 );
+	SAFE_RELEASE( resource );
+
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
+	mCapsuleLightsSRV->GetResource( &resource );
+	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
+	memcpy( mappedData.pData, mCapsuleLights.data(), sizeof( CapsuleLight ) * mCapsuleLights.size() );
 	pd3dImmediateContext->Unmap( resource, 0 );
 	SAFE_RELEASE( resource );
 
@@ -1804,10 +1859,13 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	
 	int pointLightCount = min( mPointLights.size() - 1, 1024 );
 	int spotLightCount = min( mSpotLights.size() - 1, 1024 );
+	int capsuleLightCount = min( mCapsuleLights.size() - 1, 1024 );
 	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( mPointLightsSRV );
 	mTiledDeferredFX->GetVariableByName("gPointLightCount")->AsScalar()->SetInt( pointLightCount );
 	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( mSpotLightsSRV );
 	mTiledDeferredFX->GetVariableByName("gSpotLightCount")->AsScalar()->SetInt( spotLightCount );
+	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( mCapsuleLightsSRV );
+	mTiledDeferredFX->GetVariableByName("gCapsuleLightCount")->AsScalar()->SetInt( capsuleLightCount );
 
 
 	mTiledDeferredFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix( (float*)&mCamera.Proj() );

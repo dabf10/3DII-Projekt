@@ -94,6 +94,16 @@ private:
 		float Intensity;
 	};
 
+	struct CapsuleLight
+	{
+		XMFLOAT3 PositionVS;
+		float RangeRcp;
+		XMFLOAT3 DirectionVS;
+		float Length;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
 private:
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
@@ -222,6 +232,8 @@ private:
 	ID3D11ShaderResourceView *mPointLightsSRV;
 	std::vector<SpotLight> mSpotLights;
 	ID3D11ShaderResourceView *mSpotLightsSRV;
+	std::vector<CapsuleLight> mCapsuleLights;
+	ID3D11ShaderResourceView *mCapsuleLightsSRV;
 };
 
 #endif // _APP_H_
