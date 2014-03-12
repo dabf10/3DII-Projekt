@@ -121,6 +121,18 @@ private:
 	XMFLOAT4X4 mFlamingoWorld;
 	ID3D11ShaderResourceView* mFlamingoColor;
 
+	AnimatedModel* mGnomeModel;
+	XMFLOAT4X4 mGnomeWorld;
+	ID3D11ShaderResourceView* mGnomeColor;
+
+	AnimatedModel* mLawnMowerModel;
+	XMFLOAT4X4 mmLawnMowerWorld;
+	ID3D11ShaderResourceView* mLawnMowerColor;
+
+	AnimatedModel* mFenceModel;
+	XMFLOAT4X4 mFenceWorld;
+	ID3D11ShaderResourceView* mFenceColor;
+
 	ID3D11ShaderResourceView *mProjPointLightColor;
 	ID3D11ShaderResourceView *mProjSpotlightColor;
 	

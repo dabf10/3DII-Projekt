@@ -81,6 +81,12 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Flamingo_Final_1_Default_diffuse.dds", 0, 0, &mFlamingoColor, 0)))
 		return E_FAIL;
+	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Gnome_Final_1_Gnome_Diffuse_Red.dds", 0, 0, &mGnomeColor, 0)))
+		return E_FAIL;
+	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "LawnMover_Final_1_Red.dds", 0, 0, &mLawnMowerColor, 0)))
+		return E_FAIL;
+	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Fence_Final_1_Diffuce.dds", 0, 0, &mFenceColor, 0)))
+		return E_FAIL;
 
 	mLevel = new Model();
 	if (!mLevel->LoadOBJ( "Map.obj", true, pd3dDevice ) )
@@ -100,6 +106,12 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	mFlamingoModel = new AnimatedModel();
 	mFlamingoModel->LoadGnome("Flamingo_Final_1.GNOME", pd3dDevice);
+	mGnomeModel = new AnimatedModel();
+	mGnomeModel->LoadGnome("Gnome_Final_1_Red.GNOME", pd3dDevice);
+	mLawnMowerModel = new AnimatedModel();
+	mLawnMowerModel->LoadGnome("LawnMover_Final_1_Red.GNOME", pd3dDevice);
+	mFenceModel = new AnimatedModel();
+	mFenceModel->LoadGnome("Fence_Final_2.GNOME", pd3dDevice);
 
 	mSphereModel = new Model();
 	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice ) )
@@ -175,9 +187,16 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_DELETE(mSphereModel);
 	SAFE_DELETE(mConeModel);
 	SAFE_DELETE(mFlamingoModel);
+	SAFE_DELETE(mGnomeModel);
+	SAFE_DELETE(mLawnMowerModel);
+	SAFE_DELETE(mFenceModel);
 
 	SAFE_RELEASE( mBthColor );
 	SAFE_RELEASE(mFlamingoColor);
+	SAFE_RELEASE(mGnomeColor);
+	SAFE_RELEASE(mLawnMowerColor);
+	SAFE_RELEASE(mFenceColor);
+
 	SAFE_RELEASE( mSphereSRV );
 	for (int i = 0; i < 3; ++i)
 	{
@@ -341,13 +360,46 @@ bool App::Init( )
 	world = scale * rotation * translation;
 	XMStoreFloat4x4( &mLevelWorld, world );
 
+	XMMATRIX rotationX;
+	XMMATRIX rotationY;
+
 	//Flamingo world
 	uniformScaleFactor = 0.009f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
-	rotation = XMMatrixRotationX(XMConvertToRadians(90));
-	translation = XMMatrixTranslation(0.0f, 0.5f, 25.0f);
+	rotationX = XMMatrixRotationX(XMConvertToRadians(90));
+	rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
+	rotation = rotationX * rotationY;
+	translation = XMMatrixTranslation(-50.0f, 0.5f, 0.0f);
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mFlamingoWorld, world);
+
+	//Gnome World
+	uniformScaleFactor = 0.009f;
+	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
+	rotationX = XMMatrixRotationX(XMConvertToRadians(90));
+	rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
+	rotation = rotationX * rotationY;
+	translation = XMMatrixTranslation(-50.0f, 0.5f, 10.0f);
+	world = scale * rotation * translation;
+	XMStoreFloat4x4(&mGnomeWorld, world);
+
+	//Lawn Mower World
+	uniformScaleFactor = 0.009f;
+	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
+	rotationX = XMMatrixRotationX(XMConvertToRadians(90));
+	rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
+	rotation = rotationX * rotationY;
+	translation = XMMatrixTranslation(-50.0f, 0.5f, -10.0f);
+	world = scale * rotation * translation;
+	XMStoreFloat4x4(&mmLawnMowerWorld, world);
+
+	//Fence World
+	uniformScaleFactor = 0.009f;
+	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor * 2.0);
+	rotation = XMMatrixRotationX(XMConvertToRadians(0));
+	translation = XMMatrixTranslation(-23.5f, 0.0f, 0.0f);
+	world = scale * rotation * translation;
+	XMStoreFloat4x4(&mFenceWorld, world);
 
 	return true;
 }
@@ -431,21 +483,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mBthColor);
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mBth->Render( pd3dImmediateContext );
-		
-		//
-		// Flamingo
-		//
-		world = XMLoadFloat4x4(&mFlamingoWorld);
-		worldView = world * mCamera.View();
-		wvp = world * mCamera.ViewProj();
-		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
-		
-		//Set object specific constants
-		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFlamingoColor);
-		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		mFlamingoModel->Render( pd3dImmediateContext );
+
 
 		//
 		// Level
@@ -509,6 +547,72 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mSphereSRV);
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mSphereModel->Render( pd3dImmediateContext );
+
+		//Render GNOME FORMAT
+		pd3dImmediateContext->RSSetState(mCullFront);
+
+		//
+		// Flamingo
+		//
+		world = XMLoadFloat4x4(&mFlamingoWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFlamingoColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFlamingoModel->Render( pd3dImmediateContext );
+
+		//
+		// Gnome
+		//
+		world = XMLoadFloat4x4(&mGnomeWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mGnomeColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mGnomeModel->Render( pd3dImmediateContext );
+
+		//
+		// Lawn Mower
+		//
+		world = XMLoadFloat4x4(&mmLawnMowerWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mLawnMowerColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mLawnMowerModel->Render( pd3dImmediateContext );
+
+		//
+		// Fence
+		//
+		world = XMLoadFloat4x4(&mFenceWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFenceColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFenceModel->Render( pd3dImmediateContext );
+
+		//Done with GNOME
+		pd3dImmediateContext->RSSetState(mCullBack);
 
 		//
 		// Cone model
