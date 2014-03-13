@@ -104,6 +104,13 @@ private:
 		float Intensity;
 	};
 
+	struct DirectionalLight
+	{
+		XMFLOAT3 DirectionVS;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
 private:
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
@@ -235,6 +242,11 @@ private:
 	ID3D11ShaderResourceView *mSpotLightsSRV;
 	std::vector<CapsuleLight> mCapsuleLights;
 	ID3D11ShaderResourceView *mCapsuleLightsSRV;
+	DirectionalLight mDirectionalLight;
+	PointLight mProjPointLight;
+	SpotLight mProjSpotlight;
+
+	bool deferred;
 };
 
 #endif // _APP_H_

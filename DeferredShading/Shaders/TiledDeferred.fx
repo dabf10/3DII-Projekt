@@ -224,6 +224,22 @@ bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
 	return inFrustum;
 }
 
+// TODO: Light calculation could be performed in world space. If not, light data
+// will have to be transformed into view space. That can be done in two places;
+// either we do it on the CPU serially for every light or we transform light data
+// into view space on the fly here in the compute shader. Transforming would have
+// to be done for every light where at least position needs to be transformed.
+// OR... we could simply keep working in world space (transform GBuffer into WS which
+// is reused for several lights anyway). Instead of transforming several lights
+// for every pixel, we just transform pixel data. Now, the tile frustum calculation
+// would need to be altered and depth would likely need to be in WS as well (VS now?).
+// That means that tile frustum calculation must be recalculated (in VS it could
+// be precalculated because in VS it never changes). However, this is not an issue
+// because tile frustum calculation is really fast and I calculate it here anyway.
+// I believe working in WS with tiled deferred gives a big win because if we work
+// in VS, even static lights have to be transformed when the camera moves. In WS,
+// we can just set data once and be happy with it.
+
 // One pixel per thread, 16x16 thread groups (= 1 tile).
 #define BLOCK_SIZE 16
 [numthreads(BLOCK_SIZE, BLOCK_SIZE, 1)]

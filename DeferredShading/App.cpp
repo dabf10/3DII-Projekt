@@ -62,7 +62,8 @@ App::App() :
 	mPostProcessRT( 0 ),
 	mPointLightsSRV( 0 ),
 	mSpotLightsSRV( 0 ),
-	mCapsuleLightsSRV( 0 )
+	mCapsuleLightsSRV( 0 ),
+	deferred( true )
 {
 }
 
@@ -404,6 +405,20 @@ bool App::Init( )
 	nullCapsuleLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
 	mCapsuleLights.push_back( nullCapsuleLight );
 	
+	mDirectionalLight.Color = XMFLOAT3( 0.4f, 0.4f, 0.4f );
+	mDirectionalLight.DirectionVS = XMFLOAT3( 0, -1, 1 ); // World space
+	mDirectionalLight.Intensity = 1.0f;
+
+	mProjPointLight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
+	mProjPointLight.Radius = 20.0f;
+	mProjPointLight.Intensity = 5.0f;
+
+	mProjSpotlight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
+	mProjSpotlight.DirectionVS = XMFLOAT3( 1, 0, 0 ); // World space
+	mProjSpotlight.RangeRcp = 15.0f; // Not reciprocal
+	mProjSpotlight.CosOuter = 20.0f; // Not cos
+	mProjSpotlight.CosInner = 10.0f; // Not cos :)
+	mProjSpotlight.Intensity = 7.0f;
 
 	return true;
 }
@@ -430,6 +445,10 @@ void App::OnFrameMove( double fTime, float fElapsedTime )
 		mCamera.Strafe(cameraSpeed * fElapsedTime);
 
 	mCamera.UpdateViewMatrix();
+
+	deferred = true;
+	if (GetAsyncKeyState(VK_NUMPAD9) & 0x8000)
+		deferred = false;
 
 	AnimateLights( fTime );
 }
@@ -477,16 +496,20 @@ void App::AnimateLights( float fTime )
 			// Scale by circle radius to get world position. Also multiply by the
 			// original sign of the respective components to compensate for removed signs.
 			XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
-			XMVECTOR posVS = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
+			XMVECTOR pos;
+			if (deferred)
+				pos = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
+			else
+				pos = XMLoadFloat3( &posW );
 
-			mPointLights[i].PositionVS = (float*)&posVS;
+			mPointLights[i].PositionVS = (float*)&pos;
 			mPointLights[i].Color = colors[i];
 			mPointLights[i].Radius = lightRadius;
 			mPointLights[i].Intensity = lightIntensity;
 		}
 	}
 
-	// Spotlight
+	// Spotlight + ProjSpotlight
 	{
 		XMFLOAT3 color(0.0f, 1.0f, 0.0f);
 		XMFLOAT3 posW(0.0f, 10.0f, 40.0f);
@@ -499,37 +522,61 @@ void App::AnimateLights( float fTime )
 		dirW.y = -1;
 		dirW.z = cosf(static_cast<float>( fTime ));
 
-		XMVECTOR posVS = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
-		XMVECTOR dirVS = XMVector4Transform( XMVector3Normalize( XMLoadFloat4( &dirW ) ), mCamera.View() );
+		XMVECTOR pos;
+		if (deferred)
+			pos = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
+		else
+			pos = XMLoadFloat3( &posW );
 
-		mSpotLights[0].PositionVS = (float*)&posVS;
+		XMVECTOR dir;
+		if (deferred)
+			dir = XMVector4Transform( XMVector3Normalize( XMLoadFloat4( &dirW ) ), mCamera.View() );
+		else
+			dir = XMVector3Normalize( XMLoadFloat4( &dirW ) );
+
+		mSpotLights[0].PositionVS = (float*)&pos;
 		mSpotLights[0].Color = color;
-		mSpotLights[0].RangeRcp = 1 / range;
+		mSpotLights[0].RangeRcp = deferred ? 1 / range : range;
 		mSpotLights[0].Intensity = 5.0f;
-		mSpotLights[0].DirectionVS = (float*)&dirVS;
-		mSpotLights[0].CosInner = cosf( XMConvertToRadians( innerAngleDeg ) );
-		mSpotLights[0].CosOuter = cosf( XMConvertToRadians( outerAngleDeg ) );
+		mSpotLights[0].DirectionVS = (float*)&dir;
+		mSpotLights[0].CosInner = deferred ? cosf( XMConvertToRadians( innerAngleDeg ) ) : innerAngleDeg;
+		mSpotLights[0].CosOuter = deferred ? cosf( XMConvertToRadians( outerAngleDeg ) ) : outerAngleDeg;
+
+		mProjSpotlight.DirectionVS = *(XMFLOAT3*)&dirW; // Haaax-cast
 	}
 
 	// Capsule lights
 	{
-		float rangeRcp = 1 / 0.8f;
+		float rangeRcp = deferred ? 1 / 0.8f : 0.8f;
 		float length = 6.0f;
 		float intensity = 2.0f;
 
-		XMVECTOR dirVS = XMVector4Transform( XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) ), mCamera.View() );
-		XMVECTOR posVS = XMVector3Transform( XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
-		XMStoreFloat3( &mCapsuleLights[0].DirectionVS, dirVS );
-		XMStoreFloat3( &mCapsuleLights[0].PositionVS, posVS );
+		XMVECTOR dir;
+		if (deferred)
+			dir = XMVector4Transform( XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) ), mCamera.View() );
+		else
+			dir = XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) );
+
+		XMVECTOR pos;
+		if (deferred)
+			pos = XMVector3Transform( XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
+		else
+			pos = XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f );
+
+		XMStoreFloat3( &mCapsuleLights[0].DirectionVS, dir );
+		XMStoreFloat3( &mCapsuleLights[0].PositionVS, pos );
 
 		mCapsuleLights[0].Color = XMFLOAT3( 1.0f, 0.0f, 0.0f );
 		mCapsuleLights[0].RangeRcp = rangeRcp;
 		mCapsuleLights[0].Length = length;
 		mCapsuleLights[0].Intensity = intensity;
 	
-		posVS = XMVector3Transform( XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
-		XMStoreFloat3( &mCapsuleLights[1].DirectionVS, dirVS );
-		XMStoreFloat3( &mCapsuleLights[1].PositionVS, posVS );
+		if (deferred)
+			pos = XMVector3Transform( XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
+		else
+			pos = XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f );
+		XMStoreFloat3( &mCapsuleLights[1].DirectionVS, dir );
+		XMStoreFloat3( &mCapsuleLights[1].PositionVS, pos );
 
 		mCapsuleLights[1].Color = XMFLOAT3( 0.0f, 0.0f, 1.0f );
 		mCapsuleLights[1].RangeRcp = rangeRcp;
@@ -678,7 +725,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// Render lights
 	//
 
-	if (GetAsyncKeyState(VK_NUMPAD9) & 0x8000)
+	if (!deferred)
 		RenderLights( pd3dImmediateContext, fTime );
 	else
 		RenderLightsTiled( pd3dImmediateContext, fTime );
@@ -1553,9 +1600,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mDirectionalLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
 	mDirectionalLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	// Render directional lights
-	float uniformLight = 0.4f;
-	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(uniformLight, uniformLight, uniformLight), XMFLOAT3(0, -1, 1), 1.0f );
+	// Render directional light
+	RenderDirectionalLight( pd3dImmediateContext, mDirectionalLight.Color, mDirectionalLight.DirectionVS, mDirectionalLight.Intensity );
 
 	// Unbind the G-Buffer textures
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1576,46 +1622,10 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 	mPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	XMFLOAT3 colors[10];
-	colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
-	colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
-	colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
-	colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
-	colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
-	colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
-	colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
-	colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
-	colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
-	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
-
-	float lightRadiusFirstSet = 6.0f;
-	float lightIntensityFirstSet = 4.0f;
-
-	for (UINT i = 0; i < 10; ++i)
-	{
-		XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
-		float circleRadius = 19.3f;
-
-		float power = 6;
-		float powerRcp = 1 / power;
-		float x = XMVectorGetX(sphDir);
-		float xSign = x / abs(x);
-		float xPowered = powf( abs(x), power );
-		float z = XMVectorGetZ(sphDir);
-		float zSign = z / abs(z);
-		float zPowered = powf( abs(z), power );
-
-		// Calculate point on superellipse
-		float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
-		float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
-
-		// Scale by circle radius to get world position. Also multiply by the
-		// original sign of the respective components to compensate for removed signs.
-		XMFLOAT3 pos = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
-
-		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
-	}
-
+	// Every point light except null light
+	for (int i = 0; i < mPointLights.size() - 1; ++i)
+		RenderPointLight( pd3dImmediateContext, mPointLights[i].Color, mPointLights[i].PositionVS, mPointLights[i].Radius, mPointLights[i].Intensity );
+	
 	// Unbind the G-Buffer textures
 	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
 	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
@@ -1629,24 +1639,16 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
 	pd3dImmediateContext->RSSetState( mCullFront );
 	
-	XMFLOAT3 color(0.0f, 1.0f, 0.0f);
-	XMFLOAT3 position(0.0f, 10.0f, 40.0f);
-	XMFLOAT3 direction(0.0f, 0.0f, 1.0f);
-	float range = 15.0f;
-	float outerAngleDeg = 20.0f; // Angle from center outwards.
-	float innerAngleDeg = 10.0f;
-
-	direction.x = sinf(static_cast<float>( fTime ));
-	direction.y = -1;
-	direction.z = cosf(static_cast<float>( fTime ));
-	
 	// Set shader variables common for every spotlight
 	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
-	RenderSpotlight( pd3dImmediateContext, color, 5.0f, position, direction, range,
-		outerAngleDeg, innerAngleDeg );
+	// Every spotlight except null light
+	for (int i = 0; i < mSpotLights.size() - 1; ++i)
+		RenderSpotlight( pd3dImmediateContext, mSpotLights[i].Color, mSpotLights[i].Intensity,
+			mSpotLights[i].PositionVS, mSpotLights[i].DirectionVS, mSpotLights[i].RangeRcp,
+			mSpotLights[i].CosOuter, mSpotLights[i].CosInner );
 
 	// Unbind G-Buffer textures
 	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1667,11 +1669,10 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
 	
-	// Render capsule lights
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f, 2.0f );
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f, 2.0f );
+	// Every capsule light except null light
+	for (int i = 0; i < mCapsuleLights.size() - 1; ++i)
+		RenderCapsuleLight( pd3dImmediateContext, mCapsuleLights[i].Color, mCapsuleLights[i].PositionVS,
+			mCapsuleLights[i].DirectionVS, mCapsuleLights[i].RangeRcp, mCapsuleLights[i].Length, mCapsuleLights[i].Intensity );
 
 	// Unbind the G-Buffer textures
 	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1692,7 +1693,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 5.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
+		mProjPointLight.Radius, mProjPointLight.Intensity, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1706,18 +1708,15 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 
 	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
 	pd3dImmediateContext->RSSetState( mCullFront );
-
-	position = XMFLOAT3( 45, 5, 0);
-	direction.y = -1.0f;
 	
 	// Set shader variables common for every projective spotlight
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mProjSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
-	// Reuse position and stuff from previous spotlight
-	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
-		outerAngleDeg, innerAngleDeg, 7.0f );
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, mProjSpotlight.PositionVS,
+		mProjSpotlight.DirectionVS, mProjSpotlight.RangeRcp, mProjSpotlight.CosOuter,
+		mProjSpotlight.CosInner, mProjSpotlight.Intensity );
 
 	// Unbind G-Buffer textures
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1809,12 +1808,12 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
-	// Render directional, projective point, and projective spotlights as regular deferred.
+	// Render directional, projective point, and projective spotlights as regular deferred (geometry)
 
 	// Bind the HDR buffer as render target. Using additive blending, the contribution
 	// of every light will be summed and stored in this buffer.
 	pd3dImmediateContext->OMSetRenderTargets( 1, &mHDRRT, mMainDepthDSVReadOnly );
-	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
+	pd3dImmediateContext->OMSetBlendState( mAdditiveBlend, 0, 0xffffffff );
 	
 	// Common for every light
 	XMVECTOR det;
@@ -1834,9 +1833,8 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mDirectionalLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
 	mDirectionalLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	// Render directional lights
-	float uniformLight = 0.4f;
-	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(uniformLight, uniformLight, uniformLight), XMFLOAT3(0, -1, 1), 1.0f );
+	// Render directional light
+	RenderDirectionalLight( pd3dImmediateContext, mDirectionalLight.Color, mDirectionalLight.DirectionVS, mDirectionalLight.Intensity );
 
 	// Unbind the G-Buffer textures
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1857,7 +1855,8 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 5.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
+		mProjPointLight.Radius, mProjPointLight.Intensity, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1871,15 +1870,6 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 
 	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
 	pd3dImmediateContext->RSSetState( mCullFront );
-
-	XMFLOAT3 position = XMFLOAT3( 45, 5, 0);
-	XMFLOAT3 direction;
-	direction.x = sinf(static_cast<float>( fTime ));
-	direction.z = cosf(static_cast<float>( fTime ));
-	direction.y = -1.0f;
-	float range = 15.0f;
-	float outerAngleDeg = 20.0f; // Angle from center outwards.
-	float innerAngleDeg = 10.0f;
 	
 	// Set shader variables common for every projective spotlight
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
@@ -1887,8 +1877,9 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
 	// Reuse position and stuff from previous spotlight
-	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
-		outerAngleDeg, innerAngleDeg, 7.0f );
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, mProjSpotlight.PositionVS,
+		mProjSpotlight.DirectionVS, mProjSpotlight.RangeRcp, mProjSpotlight.CosOuter,
+		mProjSpotlight.CosInner, mProjSpotlight.Intensity );
 
 	// Unbind G-Buffer textures
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
