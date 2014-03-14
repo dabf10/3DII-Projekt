@@ -130,11 +130,11 @@ private:
 		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
 	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float length, float intensity );
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float length, float intensity );
 	void RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, float radius, float intensity, float fTime ); // Remove time, it's just to test light animation
 	void RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float outerAngleDeg,
 		float innerAngleDeg, float intensity );
 	void RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
 
@@ -142,6 +142,7 @@ private:
 
 	HRESULT CreateLightBuffers( ID3D11Device *pd3dDevice );
 	void AnimateLights( float fTime );
+	void InitializeLights( );
 
 private:
 	Model *mBth;

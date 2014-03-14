@@ -6,6 +6,7 @@ Texture2D<float4> gDepthMap : register( t2 );
 // Output
 RWTexture2D<float4> gOutputTexture : register( u0 ); // Full ihopsatt och ljussatt HDR textur
 
+float4x4 gView;
 float4x4 gProj;
 float4x4 gInvProj;
 float gBackbufferWidth;
@@ -68,6 +69,8 @@ groupshared uint visibleCapsuleLightIndices[1024];
 
 float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 {
+	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
+
 	// Surface-to-light vector
 	float3 lightVector = light.PositionVS - gbuffer.PosVS;
 
@@ -99,6 +102,9 @@ float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 
 float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 {
+	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
+	light.DirectionVS = mul( float4( light.DirectionVS, 0.0f ), gView ).xyz;
+
 	float3 toLight = light.PositionVS - gbuffer.PosVS;
 	float distToLight = length( toLight );
 	toLight /= distToLight; // Normalize
@@ -133,6 +139,9 @@ float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 
 float3 EvaluateCapsuleLightDiffuse( CapsuleLight light, GBuffer gbuffer )
 {
+	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
+	light.DirectionVS = mul( float4( light.DirectionVS, 0.0f ), gView ).xyz;
+
 	float3 toCapsuleStart = gbuffer.PosVS - light.PositionVS;
 
 	// Project start-to-fragment onto light direction to get distance from
@@ -177,7 +186,8 @@ bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
-		float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		//float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		float dist = dot( frustumPlanes[i], mul( float4( light.PositionVS, 1.0f ), gView ) );
 		inFrustum = inFrustum && (-light.Radius <= dist);
 	}
 
@@ -193,7 +203,8 @@ bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
-		float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		//float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		float dist = dot( frustumPlanes[i], mul( float4( light.PositionVS, 1.0f ), gView ) );
 		inFrustum = inFrustum && (-range <= dist);
 	}
 
@@ -208,8 +219,10 @@ bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 // the whole capsule does.
 bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
 {
-	float4 startPoint = float4( light.PositionVS, 1.0f );
-	float4 endPoint = float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f );
+	//float4 startPoint = float4( light.PositionVS, 1.0f );
+	//float4 endPoint = float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f );
+	float4 startPoint = mul( float4( light.PositionVS, 1.0f ), gView );
+	float4 endPoint = mul( float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f ), gView );
 	float range = 1 / light.RangeRcp;
 
 	bool inFrustum = true;
@@ -239,6 +252,12 @@ bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
 // I believe working in WS with tiled deferred gives a big win because if we work
 // in VS, even static lights have to be transformed when the camera moves. In WS,
 // we can just set data once and be happy with it.
+
+// TODO: Right now I transform light data into view space and work there. This is
+// really unnecessary because I do this transform for every intersecting light for
+// every pixel. What I could do instead is work in view space and only transform
+// gbuffer data instead. Since it's reused for the lights I only do one transform
+// per pixel. When I fix that, search for gView and see where it's used to fix.
 
 // One pixel per thread, 16x16 thread groups (= 1 tile).
 #define BLOCK_SIZE 16

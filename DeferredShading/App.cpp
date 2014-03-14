@@ -386,20 +386,92 @@ bool App::Init( )
 	std::vector<int> hest;
 	importer.getVectors("Flamingo_Final_1.GNOME", materials, vertices, hest);
 
-	// Light arrays
-	mPointLights.insert( mPointLights.begin(), 10, PointLight() ); // Hard coded for now :) (values set in AnimateLights())
+	InitializeLights( );
+
+	return true;
+}
+
+
+void App::InitializeLights( )
+{
+	XMFLOAT3 position( 0.0f, 0.0f, 0.0f );
+	float range = 6.0f;
+	float intensity = 4.0f;
+
+	static XMFLOAT3 colors[10] =
+	{
+		XMFLOAT3( 0.133f, 0.545f, 0.133f ), // ForestGreen
+		XMFLOAT3( 0, 0, 1 ), // Blue
+		XMFLOAT3( 1, 0.75294f, 0.796078f ), // Pink
+		XMFLOAT3( 1, 1, 0 ), // Yellow
+		XMFLOAT3( 1, 0.6470588f, 0 ), // Orange
+		XMFLOAT3( 0, 0.5f, 0 ), // Green
+		XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ), // Crimson
+		XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ), // CornFlowerBlue
+		XMFLOAT3( 1, 0.843137f, 0 ), // Gold
+		XMFLOAT3( 0.94117647f, 1, 0.94117647f ), // Honeydew
+	};
+
+	mPointLights.insert( mPointLights.begin(), 10, PointLight() );
+	for (int i = 0; i < 10; ++i)
+	{
+		mPointLights[i].Color = colors[i];
+		mPointLights[i].Intensity = intensity;
+		mPointLights[i].Radius = range;
+		mPointLights[i].PositionVS = position;
+	}
+	//mPointLights.insert( mPointLights.begin() + 10, 1000, PointLight() );
+	//for (int i = 10; i < 1010; ++i)
+	//{
+	//	mPointLights[i].Intensity = intensity;
+	//	mPointLights[i].Radius = range;
+	//	mPointLights[i].Color = colors[1];
+	//	mPointLights[i].PositionVS.x = (i - 10) % (25 - (-25)) + (-25);
+	//	mPointLights[i].PositionVS.y = (i - 10) % (20 - 0) + 0;
+	//	mPointLights[i].PositionVS.z = (i - 10) % (75 - 30) + 30;
+	//}
 	PointLight nullPointLight;
 	ZeroMemory( &nullPointLight, sizeof( PointLight ) );
 	nullPointLight.Radius = -D3D11_FLOAT32_MAX; // Negative range to fail intersection test.
 	mPointLights.push_back( nullPointLight );
 
+	
+	position = XMFLOAT3( 0.0f, 10.0f, 40.0f );
+	XMFLOAT3 color( 0.0f, 1.0f, 0.0f );
+	range = 15.0f;
+	float cosOuter = cosf( XMConvertToRadians( 20.0f ) ); // Angle from center outwards.
+	float cosInner = cosf( XMConvertToRadians( 10.0f ) );
+	intensity = 5.0f;
+		
 	mSpotLights.insert( mSpotLights.begin(), 1, SpotLight() );
+	mSpotLights[0].Color = color;
+	mSpotLights[0].CosOuter = cosOuter;
+	mSpotLights[0].CosInner = cosInner;
+	mSpotLights[0].DirectionVS = XMFLOAT3( 0.0f, 0.0f, 1.0f );
+	mSpotLights[0].Intensity = intensity;
+	mSpotLights[0].PositionVS = position;
+	mSpotLights[0].RangeRcp = 1 / range;
 	SpotLight nullSpotLight;
 	ZeroMemory( &nullSpotLight, sizeof( SpotLight ) );
 	nullSpotLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
 	mSpotLights.push_back( nullSpotLight );
 
+	float length = 6.0f;
+	range = 0.8f;
+	intensity = 2.0f;
+
 	mCapsuleLights.insert( mCapsuleLights.begin(), 2, CapsuleLight() );
+	for (int i = 0; i < 2; ++i)
+	{
+		mCapsuleLights[i].Length = length;
+		mCapsuleLights[i].RangeRcp = 1 / range;
+		mCapsuleLights[i].Intensity = intensity;
+		mCapsuleLights[i].DirectionVS = XMFLOAT3( 0.0f, 1.0f, 0.0f );
+	}
+	mCapsuleLights[0].Color = XMFLOAT3( 1.0f, 0.0f, 0.0f );
+	mCapsuleLights[0].PositionVS = XMFLOAT3( -10.4f, 2.0f, 38.42f );
+	mCapsuleLights[1].Color = XMFLOAT3( 0.0f, 0.0f, 1.0f );
+	mCapsuleLights[1].PositionVS = XMFLOAT3( 10.4f, 2.0f, 38.42f );
 	CapsuleLight nullCapsuleLight;
 	ZeroMemory( &nullCapsuleLight, sizeof( CapsuleLight ) );
 	nullCapsuleLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
@@ -415,12 +487,10 @@ bool App::Init( )
 
 	mProjSpotlight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
 	mProjSpotlight.DirectionVS = XMFLOAT3( 1, 0, 0 ); // World space
-	mProjSpotlight.RangeRcp = 15.0f; // Not reciprocal
-	mProjSpotlight.CosOuter = 20.0f; // Not cos
-	mProjSpotlight.CosInner = 10.0f; // Not cos :)
+	mProjSpotlight.RangeRcp = 1 / 15.0f; // Not reciprocal
+	mProjSpotlight.CosOuter = cosf( XMConvertToRadians( 20.0f ) ); // Not cos
+	mProjSpotlight.CosInner = cosf( XMConvertToRadians( 10.0f ) ); // Not cos :)
 	mProjSpotlight.Intensity = 7.0f;
-
-	return true;
 }
 
 
@@ -458,23 +528,6 @@ void App::AnimateLights( float fTime )
 {
 	// Point lights
 	{
-		static XMFLOAT3 colors[10] =
-		{
-			XMFLOAT3( 0.133f, 0.545f, 0.133f ), // ForestGreen
-			XMFLOAT3( 0, 0, 1 ), // Blue
-			XMFLOAT3( 1, 0.75294f, 0.796078f ), // Pink
-			XMFLOAT3( 1, 1, 0 ), // Yellow
-			XMFLOAT3( 1, 0.6470588f, 0 ), // Orange
-			XMFLOAT3( 0, 0.5f, 0 ), // Green
-			XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ), // Crimson
-			XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ), // CornFlowerBlue
-			XMFLOAT3( 1, 0.843137f, 0 ), // Gold
-			XMFLOAT3( 0.94117647f, 1, 0.94117647f ), // Honeydew
-		};
-
-		float lightRadius = 6.0f;
-		float lightIntensity = 4.0f;
-
 		for (UINT i = 0; i < 10; ++i)
 		{
 			XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
@@ -496,92 +549,22 @@ void App::AnimateLights( float fTime )
 			// Scale by circle radius to get world position. Also multiply by the
 			// original sign of the respective components to compensate for removed signs.
 			XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
-			XMVECTOR pos;
-			if (deferred)
-				pos = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
-			else
-				pos = XMLoadFloat3( &posW );
-
-			mPointLights[i].PositionVS = (float*)&pos;
-			mPointLights[i].Color = colors[i];
-			mPointLights[i].Radius = lightRadius;
-			mPointLights[i].Intensity = lightIntensity;
+			
+			mPointLights[i].PositionVS = (float*)&posW;
 		}
 	}
 
 	// Spotlight + ProjSpotlight
 	{
-		XMFLOAT3 color(0.0f, 1.0f, 0.0f);
-		XMFLOAT3 posW(0.0f, 10.0f, 40.0f);
 		XMFLOAT4 dirW(0.0f, 0.0f, 1.0f, 0.0f);
-		float range = 15.0f;
-		float outerAngleDeg = 20.0f; // Angle from center outwards.
-		float innerAngleDeg = 10.0f;
-
 		dirW.x = sinf(static_cast<float>( fTime ));
 		dirW.y = -1;
 		dirW.z = cosf(static_cast<float>( fTime ));
 
-		XMVECTOR pos;
-		if (deferred)
-			pos = XMVector3Transform( XMLoadFloat3( &posW ), mCamera.View() );
-		else
-			pos = XMLoadFloat3( &posW );
+		XMVECTOR dir = XMVector3Normalize( XMLoadFloat4( &dirW ) );
 
-		XMVECTOR dir;
-		if (deferred)
-			dir = XMVector4Transform( XMVector3Normalize( XMLoadFloat4( &dirW ) ), mCamera.View() );
-		else
-			dir = XMVector3Normalize( XMLoadFloat4( &dirW ) );
-
-		mSpotLights[0].PositionVS = (float*)&pos;
-		mSpotLights[0].Color = color;
-		mSpotLights[0].RangeRcp = deferred ? 1 / range : range;
-		mSpotLights[0].Intensity = 5.0f;
 		mSpotLights[0].DirectionVS = (float*)&dir;
-		mSpotLights[0].CosInner = deferred ? cosf( XMConvertToRadians( innerAngleDeg ) ) : innerAngleDeg;
-		mSpotLights[0].CosOuter = deferred ? cosf( XMConvertToRadians( outerAngleDeg ) ) : outerAngleDeg;
-
-		mProjSpotlight.DirectionVS = *(XMFLOAT3*)&dirW; // Haaax-cast
-	}
-
-	// Capsule lights
-	{
-		float rangeRcp = deferred ? 1 / 0.8f : 0.8f;
-		float length = 6.0f;
-		float intensity = 2.0f;
-
-		XMVECTOR dir;
-		if (deferred)
-			dir = XMVector4Transform( XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) ), mCamera.View() );
-		else
-			dir = XMVector3Normalize( XMVectorSet( 0.0f, 1.0f, 0.0f, 0.0f ) );
-
-		XMVECTOR pos;
-		if (deferred)
-			pos = XMVector3Transform( XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
-		else
-			pos = XMVectorSet( -10.4f, 2.0f, 38.42f, 1.0f );
-
-		XMStoreFloat3( &mCapsuleLights[0].DirectionVS, dir );
-		XMStoreFloat3( &mCapsuleLights[0].PositionVS, pos );
-
-		mCapsuleLights[0].Color = XMFLOAT3( 1.0f, 0.0f, 0.0f );
-		mCapsuleLights[0].RangeRcp = rangeRcp;
-		mCapsuleLights[0].Length = length;
-		mCapsuleLights[0].Intensity = intensity;
-	
-		if (deferred)
-			pos = XMVector3Transform( XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f ), mCamera.View() );
-		else
-			pos = XMVectorSet( 10.4f, 2.0f, 38.42f, 1.0f );
-		XMStoreFloat3( &mCapsuleLights[1].DirectionVS, dir );
-		XMStoreFloat3( &mCapsuleLights[1].PositionVS, pos );
-
-		mCapsuleLights[1].Color = XMFLOAT3( 0.0f, 0.0f, 1.0f );
-		mCapsuleLights[1].RangeRcp = rangeRcp;
-		mCapsuleLights[1].Length = length;
-		mCapsuleLights[1].Intensity = intensity;
+		mProjSpotlight.DirectionVS = (float*)&dir;
 	}
 }
 
@@ -1439,8 +1422,8 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg )
+		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float cosOuter,
+		float cosInner )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -1449,8 +1432,8 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	// Add a small epsilon to x because if the light is aimed straight up, the
 	// rotation matrix is gonna have a bad time.
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
-	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
-	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float outerAngleRad = acosf( cosOuter );
+	float range = 1 / rangeRcp;
 	float xyScale = tanf(outerAngleRad) * range;
 	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
@@ -1461,11 +1444,11 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	mSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 	
 	mSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
-	mSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
-	mSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
+	mSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosOuter);
+	mSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosInner);
 	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
 	mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
@@ -1473,7 +1456,7 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 }
 
 void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
-	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float range, float length, float intensity )
+	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float length, float intensity )
 {
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x, direction.y, direction.z, 0.0f));
 
@@ -1481,7 +1464,7 @@ void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
 	
 	mCapsuleLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
 	mCapsuleLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
 	mCapsuleLightFX->GetVariableByName("gLightLength")->AsScalar()->SetFloat(length);
 	mCapsuleLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mCapsuleLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
@@ -1517,8 +1500,8 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 }
 
 void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg, float intensity )
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float cosOuter,
+		float cosInner, float intensity )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -1527,8 +1510,8 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	// Add a small epsilon to x because if the light is aimed straight up, the
 	// rotation matrix is gonna have a bad time.
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
-	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
-	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float outerAngleRad = acosf( cosOuter );
+	float range = 1 / rangeRcp;
 	float xyScale = tanf(outerAngleRad) * range;
 	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
@@ -1543,11 +1526,11 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	mProjSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 	
 	mProjSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
-	mProjSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
-	mProjSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
+	mProjSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosOuter);
+	mProjSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosInner);
 	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
 	mProjSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
 	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
@@ -1789,10 +1772,15 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	int groupCount[2];
 	groupCount[0] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Width / 16.f) );
 	groupCount[1] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Height / 16.f) );
+	mTiledDeferredFX->GetVariableByName("gView")->AsMatrix()->SetMatrix( (float*)&mCamera.View() );
 	mTiledDeferredFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix( (float*)&mCamera.Proj() );
 	mTiledDeferredFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &XMMatrixDeterminant( mCamera.Proj() ), mCamera.Proj() ) );
 	mTiledDeferredFX->GetVariableByName("gBackbufferWidth")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Width) );
 	mTiledDeferredFX->GetVariableByName("gBackbufferHeight")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Height) );
+	XMVECTOR det;
+	//mTiledDeferredFX->GetVariableByName("gInvView")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &det, mCamera.Proj() ) );
+	//mTiledDeferredFX->GetVariableByName("gViewProj")->AsMatrix()->SetMatrix( (float*)&mCamera.ViewProj() );
+	//mTiledDeferredFX->GetVariableByName("gCameraPos")->AsVector()->SetFloatVector( (float*)&mCamera.GetPosition() );
 
 	// Apply technique and execute compute shader
 	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
@@ -1816,7 +1804,6 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	pd3dImmediateContext->OMSetBlendState( mAdditiveBlend, 0, 0xffffffff );
 	
 	// Common for every light
-	XMVECTOR det;
 	XMMATRIX invProj = XMMatrixInverse( &det, mCamera.Proj() );
 
 	//
