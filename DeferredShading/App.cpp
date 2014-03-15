@@ -12,13 +12,27 @@
 App::App() :
 	mInputLayout( 0 ),
 	mTxtHelper( 0 ),
-	mLightRT( 0 ),
-	mLightSRV( 0 ),
+	mHDRRT( 0 ),
+	mHDRSRV( 0 ),
+	mHDRUAV( 0 ),
+	mIntermediateAverageLuminanceUAV( 0 ),
+	mIntermediateAverageLuminanceSRV( 0 ),
+	mIntermediateMaximumLuminanceUAV( 0 ),
+	mIntermediateMaximumLuminanceSRV( 0 ),
+	mAverageLuminanceUAV( 0 ),
+	mAverageLuminanceSRV( 0 ),
+	mPrevAverageLuminanceUAV( 0 ),
+	mPrevAverageLuminanceSRV( 0 ),
+	mMaximumLuminanceUAV( 0 ),
+	mMaximumLuminanceSRV( 0 ),
+	mPrevMaximumLuminanceUAV( 0 ),
+	mPrevMaximumLuminanceSRV( 0 ),
 	mMainDepthDSV( 0 ),
 	mMainDepthDSVReadOnly( 0 ),
 	mMainDepthSRV( 0 ),
 	mFullscreenTextureFX( 0 ),
 	mFillGBufferFX( 0 ),
+	mAmbientLightFX( 0 ),
 	mDirectionalLightFX( 0 ),
 	mDirectionalLightTech( 0 ),
 	mPointLightFX( 0 ),
@@ -33,8 +47,10 @@ App::App() :
 	mProjSpotlightFX( 0 ),
 	mProjSpotlightTech( 0 ),
 	mProjSpotlightColor( 0 ),
-	mCombineLightFX( 0 ),
+	mTiledDeferredFX( 0 ),
 	mOldFilmFX( 0 ),
+	mLuminanceDownscaleFX( 0 ),
+	mHDRToneMapFX( 0 ),
 	mNoDepthTest( 0 ),
 	mDepthGreaterEqual( 0 ),
 	mAdditiveBlend( 0 ),
@@ -43,7 +59,11 @@ App::App() :
 	mCullNone( 0 ),
 	mSSAO( 0 ),
 	mGBuffer( 0 ),
-	mPostProcessRT( 0 )
+	mPostProcessRT( 0 ),
+	mPointLightsSRV( 0 ),
+	mSpotLightsSRV( 0 ),
+	mCapsuleLightsSRV( 0 ),
+	deferred( true )
 {
 }
 
@@ -75,7 +95,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mBth = new Model();
 	if (!mBth->LoadOBJ( "bth.obj", true, pd3dDevice ))
 		return E_FAIL;
-
+	
 	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
 		return E_FAIL;
 
@@ -173,6 +193,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullFront ) );
 	rsDesc.CullMode = D3D11_CULL_NONE;
 	V_RETURN( pd3dDevice->CreateRasterizerState( &rsDesc, &mCullNone ) );
+
+	V_RETURN( CreateLightBuffers( pd3dDevice ) );
     
 	return S_OK;
 }
@@ -219,15 +241,19 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mFillGBufferFX );
 	SAFE_RELEASE(mAnimationFX);
 
+	SAFE_RELEASE( mAmbientLightFX );
 	SAFE_RELEASE( mDirectionalLightFX );
 	SAFE_RELEASE( mPointLightFX );
 	SAFE_RELEASE( mSpotlightFX );
 	SAFE_RELEASE( mCapsuleLightFX );
 	SAFE_RELEASE( mProjPointLightFX );
 	SAFE_RELEASE( mProjSpotlightFX );
+	SAFE_RELEASE( mTiledDeferredFX );
 
-	SAFE_RELEASE( mCombineLightFX );
 	SAFE_RELEASE( mOldFilmFX );
+
+	SAFE_RELEASE( mLuminanceDownscaleFX );
+	SAFE_RELEASE( mHDRToneMapFX );
 
 	SAFE_RELEASE( mNoDepthTest );
 	SAFE_RELEASE( mDepthGreaterEqual );
@@ -235,6 +261,10 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mCullBack );
 	SAFE_RELEASE( mCullFront );
 	SAFE_RELEASE( mCullNone );
+
+	SAFE_RELEASE( mPointLightsSRV );
+	SAFE_RELEASE( mSpotLightsSRV );
+	SAFE_RELEASE( mCapsuleLightsSRV );
 }
 
 //--------------------------------------------------------------------------------------
@@ -255,7 +285,7 @@ HRESULT App::OnD3D11ResizedSwapChain( ID3D11Device* pd3dDevice, IDXGISwapChain* 
                                           const DXGI_SURFACE_DESC* pBackBufferSurfaceDesc )
 {
 	mBackBufferSurfaceDesc = pBackBufferSurfaceDesc;
-
+	
 	HRESULT hr;
 	V_RETURN( mDialogResourceManager.OnD3D11ResizedSwapChain( pd3dDevice, pBackBufferSurfaceDesc ) );
 	V_RETURN( mD3DSettingsDlg.OnD3D11ResizedSwapChain( pd3dDevice, pBackBufferSurfaceDesc ) );
@@ -285,8 +315,21 @@ void App::OnD3D11ReleasingSwapChain( )
 {
 	mDialogResourceManager.OnD3D11ReleasingSwapChain();
 	
-	SAFE_RELEASE( mLightRT );
-	SAFE_RELEASE( mLightSRV );
+	SAFE_RELEASE( mHDRRT );
+	SAFE_RELEASE( mHDRSRV );
+	SAFE_RELEASE( mHDRUAV );
+	SAFE_RELEASE( mIntermediateAverageLuminanceUAV );
+	SAFE_RELEASE( mIntermediateAverageLuminanceSRV );
+	SAFE_RELEASE( mIntermediateMaximumLuminanceUAV );
+	SAFE_RELEASE( mIntermediateMaximumLuminanceSRV );
+	SAFE_RELEASE( mAverageLuminanceUAV );
+	SAFE_RELEASE( mAverageLuminanceSRV );
+	SAFE_RELEASE( mPrevAverageLuminanceUAV );
+	SAFE_RELEASE( mPrevAverageLuminanceSRV );
+	SAFE_RELEASE( mMaximumLuminanceUAV );
+	SAFE_RELEASE( mMaximumLuminanceSRV );
+	SAFE_RELEASE( mPrevMaximumLuminanceUAV );
+	SAFE_RELEASE( mPrevMaximumLuminanceSRV );
 	SAFE_RELEASE( mMainDepthDSV );
 	SAFE_RELEASE( mMainDepthDSVReadOnly );
 	SAFE_RELEASE( mMainDepthSRV );
@@ -408,7 +451,111 @@ bool App::Init( )
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mFenceWorld, world);
 
+	InitializeLights( );
+
 	return true;
+}
+
+
+void App::InitializeLights( )
+{
+	XMFLOAT3 position( 0.0f, 0.0f, 0.0f );
+	float range = 6.0f;
+	float intensity = 4.0f;
+
+	static XMFLOAT3 colors[10] =
+	{
+		XMFLOAT3( 0.133f, 0.545f, 0.133f ), // ForestGreen
+		XMFLOAT3( 0, 0, 1 ), // Blue
+		XMFLOAT3( 1, 0.75294f, 0.796078f ), // Pink
+		XMFLOAT3( 1, 1, 0 ), // Yellow
+		XMFLOAT3( 1, 0.6470588f, 0 ), // Orange
+		XMFLOAT3( 0, 0.5f, 0 ), // Green
+		XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ), // Crimson
+		XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ), // CornFlowerBlue
+		XMFLOAT3( 1, 0.843137f, 0 ), // Gold
+		XMFLOAT3( 0.94117647f, 1, 0.94117647f ), // Honeydew
+	};
+
+	mPointLights.insert( mPointLights.begin(), 10, PointLight() );
+	for (int i = 0; i < 10; ++i)
+	{
+		mPointLights[i].Color = colors[i];
+		mPointLights[i].Intensity = intensity;
+		mPointLights[i].Range = range;
+		mPointLights[i].PositionVS = position;
+	}
+	//mPointLights.insert( mPointLights.begin() + 10, 1000, PointLight() );
+	//for (int i = 10; i < 1010; ++i)
+	//{
+	//	mPointLights[i].Intensity = intensity;
+	//	mPointLights[i].Range = range;
+	//	mPointLights[i].Color = colors[1];
+	//	mPointLights[i].PositionVS.x = (i - 10) % (25 - (-25)) + (-25);
+	//	mPointLights[i].PositionVS.y = (i - 10) % (20 - 0) + 0;
+	//	mPointLights[i].PositionVS.z = (i - 10) % (75 - 30) + 30;
+	//}
+	PointLight nullPointLight;
+	ZeroMemory( &nullPointLight, sizeof( PointLight ) );
+	nullPointLight.Range = -D3D11_FLOAT32_MAX; // Negative range to fail intersection test.
+	mPointLights.push_back( nullPointLight );
+
+	
+	position = XMFLOAT3( 0.0f, 10.0f, 40.0f );
+	XMFLOAT3 color( 0.0f, 1.0f, 0.0f );
+	range = 15.0f;
+	float cosOuter = cosf( XMConvertToRadians( 20.0f ) ); // Angle from center outwards.
+	float cosInner = cosf( XMConvertToRadians( 10.0f ) );
+	intensity = 5.0f;
+		
+	mSpotLights.insert( mSpotLights.begin(), 1, SpotLight() );
+	mSpotLights[0].Color = color;
+	mSpotLights[0].CosOuter = cosOuter;
+	mSpotLights[0].CosInner = cosInner;
+	mSpotLights[0].DirectionVS = XMFLOAT3( 0.0f, 0.0f, 1.0f );
+	mSpotLights[0].Intensity = intensity;
+	mSpotLights[0].PositionVS = position;
+	mSpotLights[0].RangeRcp = 1 / range;
+	SpotLight nullSpotLight;
+	ZeroMemory( &nullSpotLight, sizeof( SpotLight ) );
+	nullSpotLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
+	mSpotLights.push_back( nullSpotLight );
+
+	float length = 6.0f;
+	range = 0.8f;
+	intensity = 2.0f;
+
+	mCapsuleLights.insert( mCapsuleLights.begin(), 2, CapsuleLight() );
+	for (int i = 0; i < 2; ++i)
+	{
+		mCapsuleLights[i].Length = length;
+		mCapsuleLights[i].RangeRcp = 1 / range;
+		mCapsuleLights[i].Intensity = intensity;
+		mCapsuleLights[i].DirectionVS = XMFLOAT3( 0.0f, 1.0f, 0.0f );
+	}
+	mCapsuleLights[0].Color = XMFLOAT3( 1.0f, 0.0f, 0.0f );
+	mCapsuleLights[0].PositionVS = XMFLOAT3( -10.4f, 2.0f, 38.42f );
+	mCapsuleLights[1].Color = XMFLOAT3( 0.0f, 0.0f, 1.0f );
+	mCapsuleLights[1].PositionVS = XMFLOAT3( 10.4f, 2.0f, 38.42f );
+	CapsuleLight nullCapsuleLight;
+	ZeroMemory( &nullCapsuleLight, sizeof( CapsuleLight ) );
+	nullCapsuleLight.RangeRcp = -1e-6; // Small negative (range large negative) to fail intersection.
+	mCapsuleLights.push_back( nullCapsuleLight );
+	
+	mDirectionalLight.Color = XMFLOAT3( 0.4f, 0.4f, 0.4f );
+	mDirectionalLight.DirectionVS = XMFLOAT3( 0, -1, 1 ); // World space
+	mDirectionalLight.Intensity = 1.0f;
+
+	mProjPointLight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
+	mProjPointLight.Range = 20.0f;
+	mProjPointLight.Intensity = 5.0f;
+
+	mProjSpotlight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
+	mProjSpotlight.DirectionVS = XMFLOAT3( 1, 0, 0 ); // World space
+	mProjSpotlight.RangeRcp = 1 / 15.0f; // Not reciprocal
+	mProjSpotlight.CosOuter = cosf( XMConvertToRadians( 20.0f ) ); // Not cos
+	mProjSpotlight.CosInner = cosf( XMConvertToRadians( 10.0f ) ); // Not cos :)
+	mProjSpotlight.Intensity = 7.0f;
 }
 
 
@@ -433,10 +580,60 @@ void App::OnFrameMove( double fTime, float fElapsedTime )
 		mCamera.Strafe(cameraSpeed * fElapsedTime);
 
 	mCamera.UpdateViewMatrix();
-
 	mFlamingoModel->Animate(fElapsedTime);
 	mGnomeModel->Animate(fElapsedTime);
 	mLawnMowerModel->Animate(fElapsedTime);
+
+	deferred = true;
+	if (GetAsyncKeyState(VK_NUMPAD9) & 0x8000)
+		deferred = false;
+
+	AnimateLights( fTime );
+}
+
+
+void App::AnimateLights( float fTime )
+{
+	// Point lights
+	{
+		for (UINT i = 0; i < 10; ++i)
+		{
+			XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
+			float circleRadius = 19.3f;
+
+			float power = 6;
+			float powerRcp = 1 / power;
+			float x = XMVectorGetX(sphDir);
+			float xSign = x / abs(x);
+			float xPowered = powf( abs(x), power );
+			float z = XMVectorGetZ(sphDir);
+			float zSign = z / abs(z);
+			float zPowered = powf( abs(z), power );
+
+			// Calculate point on superellipse
+			float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
+			float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
+
+			// Scale by circle radius to get world position. Also multiply by the
+			// original sign of the respective components to compensate for removed signs.
+			XMFLOAT3 posW = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
+			
+			mPointLights[i].PositionVS = (float*)&posW;
+		}
+	}
+
+	// Spotlight + ProjSpotlight
+	{
+		XMFLOAT4 dirW(0.0f, 0.0f, 1.0f, 0.0f);
+		dirW.x = sinf(static_cast<float>( fTime ));
+		dirW.y = -1;
+		dirW.z = cosf(static_cast<float>( fTime ));
+
+		XMVECTOR dir = XMVector3Normalize( XMLoadFloat4( &dirW ) );
+
+		mSpotLights[0].DirectionVS = (float*)&dir;
+		mProjSpotlight.DirectionVS = (float*)&dir;
+	}
 }
 
 
@@ -479,7 +676,7 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		pd3dImmediateContext->IASetInputLayout( mInputLayout );
 
 		XMMATRIX world, worldView, wvp, worldViewInvTrp;
-
+		
 		//
 		// BTH logo
 		//
@@ -645,12 +842,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	}
 
 	//
-	// Render lights
-	//
-
-	RenderLights( pd3dImmediateContext, fTime );
-
-	//
 	// SSAO
 	//
 
@@ -666,25 +857,17 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
 
 	//
-	// Render a full-screen quad that combines the light from the light map
-	// with the color map from the G-Buffer
+	// Render lights
 	//
-	{
-		mPostProcessRT->Flip();
-		ID3D11RenderTargetView * const rtv = mPostProcessRT->GetRTV();
-		pd3dImmediateContext->OMSetRenderTargets( 1, &rtv, 0 );
 
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource(mLightSRV);
+	if (!deferred)
+		RenderLights( pd3dImmediateContext, fTime );
+	else
+		RenderLightsTiled( pd3dImmediateContext, fTime );
 
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		pd3dImmediateContext->Draw( 3, 0 );
+	// Tone map the HDR texture so that we can display it nicely.
+	ToneMap( pd3dImmediateContext, fElapsedTime );
 
-		// Unbind shader resources
-		mCombineLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetVariableByName("gLightMap")->AsShaderResource()->SetResource( 0 );
-		mCombineLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-	}
 
 	//
 	// Generate an old-film looking effect
@@ -752,9 +935,9 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		// 4 smaller in quadrants. Simply select what resource views to use
 		// and how many of those to draw.
 		ID3D11ShaderResourceView *srvs[4] = {
-			mSSAO->AOMap(),
+			mHDRSRV,
 			mGBuffer->NormalSRV(),
-			mLightSRV,
+			mSSAO->AOMap(),
 			mGBuffer->ColorSRV()
 		};
 
@@ -807,6 +990,76 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 
 	mHUD.OnRender( fElapsedTime );
 	RenderText();
+}
+
+void App::ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt )
+{
+	ID3D11RenderTargetView *rt[1] = { NULL };
+	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL );
+
+	// Common constants
+	int res[2] = { mBackBufferSurfaceDesc->Width / 4, mBackBufferSurfaceDesc->Height / 4 };
+	UINT threadGroups = (UINT)ceil((float)(mBackBufferSurfaceDesc->Width * mBackBufferSurfaceDesc->Height / 16.0f) / 1024.0f);
+	mLuminanceDownscaleFX->GetVariableByName("gDownscaleRes")->AsVector()->SetIntVector(res);
+	mLuminanceDownscaleFX->GetVariableByName("gDownscaleNumPixels")->AsScalar()->SetInt(res[0] * res[1]);
+	mLuminanceDownscaleFX->GetVariableByName("gGroupCount")->AsScalar()->SetInt(threadGroups);
+	mLuminanceDownscaleFX->GetVariableByName("gDeltaTime")->AsScalar()->SetFloat(dt);
+
+	// First pass downsamples to a small 1D array.
+	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource(mHDRSRV);
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateAverageLuminanceUAV);
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView(mIntermediateMaximumLuminanceUAV);
+
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( threadGroups, 1, 1 );
+
+	mLuminanceDownscaleFX->GetVariableByName("gHDRTex")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	// Second pass downscales to a single pixel
+	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( mIntermediateAverageLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumValues1D")->AsShaderResource()->SetResource( mIntermediateMaximumLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mAverageLuminanceUAV );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( mMaximumLuminanceUAV );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevAverageLum")->AsShaderResource()->SetResource( mPrevAverageLuminanceSRV );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevMaximumLum")->AsShaderResource()->SetResource( mPrevMaximumLuminanceSRV );
+
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( 1, 1, 1 );
+
+	mLuminanceDownscaleFX->GetVariableByName("gAverageValues1D")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumValues1D")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gAverageLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gMaximumLumOutput")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevAverageLum")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetVariableByName("gPrevMaximumLum")->AsShaderResource()->SetResource( 0 );
+	mLuminanceDownscaleFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 1 )->Apply( 0, pd3dImmediateContext );
+
+	// Final pass that does actual tone mapping
+	mPostProcessRT->Flip();
+	rt[0] = mPostProcessRT->GetRTV();
+	pd3dImmediateContext->OMSetRenderTargets( 1, rt, NULL );
+	
+	mHDRToneMapFX->GetVariableByName("gHDRTexture")->AsShaderResource()->SetResource( mHDRSRV );
+	mHDRToneMapFX->GetVariableByName("gAvgLum")->AsShaderResource()->SetResource( mAverageLuminanceSRV );
+	mHDRToneMapFX->GetVariableByName("gMaxLum")->AsShaderResource()->SetResource( mMaximumLuminanceSRV );
+
+	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Draw( 3, 0 );
+	
+	mHDRToneMapFX->GetVariableByName("gHDRTexture")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetVariableByName("gAvgLum")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetVariableByName("gMaxLum")->AsShaderResource()->SetResource( 0 );
+	mHDRToneMapFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	// Swap UAV and SRV so that average luminance of this frame becomes previous
+	// average luminance for the next.
+	std::swap( mAverageLuminanceSRV, mPrevAverageLuminanceSRV );
+	std::swap( mAverageLuminanceUAV, mPrevAverageLuminanceUAV );
+	std::swap( mMaximumLuminanceSRV, mPrevMaximumLuminanceSRV );
+	std::swap( mMaximumLuminanceUAV, mPrevMaximumLuminanceUAV );
 }
 
 
@@ -902,6 +1155,13 @@ bool App::BuildFX(ID3D11Device *device)
 	//	return false;
 
 	//
+	// AmbientLight
+	//
+
+	if (!CompileShader( device, "Shaders/AmbientLight.fx", &mAmbientLightFX ))
+		return false;
+
+	//
 	// DirectionalLight
 	//
 
@@ -909,13 +1169,6 @@ bool App::BuildFX(ID3D11Device *device)
 		return false;
 
 	mDirectionalLightTech = mDirectionalLightFX->GetTechniqueByIndex(0);
-
-	//
-	// CombineLight
-	//
-
-	if (!CompileShader( device, "Shaders/CombineLight.fx", &mCombineLightFX ))
-		return false;
 
 	//
 	// PointLight
@@ -967,6 +1220,27 @@ bool App::BuildFX(ID3D11Device *device)
 	//
 
 	if (!CompileShader( device, "Shaders/OldFilm.fx", &mOldFilmFX ))
+		return false;
+
+	//
+	// AverageLuminance
+	//
+
+	if (!CompileShader( device, "Shaders/HDRLuminanceDownscale.fx", &mLuminanceDownscaleFX ))
+		return false;
+
+	//
+	// HDRToneMap
+	//
+
+	if (!CompileShader( device, "Shaders/HDRToneMapping.fx", &mHDRToneMapFX ))
+		return false;
+
+	//
+	// TiledDeferred
+	//
+
+	if (!CompileShader( device, "Shaders/TiledDeferred.fx", &mTiledDeferredFX ))
 		return false;
 
 	return true;
@@ -1067,55 +1341,195 @@ HRESULT App::CreateGBuffer( ID3D11Device *device, UINT width, UINT height )
 	texDesc.Usage = D3D11_USAGE_DEFAULT;
 
 	//
-	// Light (not actually G-Buffer, but used to accumulate light)
+	// HDR render target
 	//
+	{
+		D3D11_TEXTURE2D_DESC hdrTexDesc = texDesc;
+		hdrTexDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		hdrTexDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+		V_RETURN( device->CreateTexture2D( &hdrTexDesc, 0, &tex ) );
+		V_RETURN( device->CreateRenderTargetView( tex, NULL, &mHDRRT ) );
+		V_RETURN( device->CreateShaderResourceView( tex, NULL, &mHDRSRV ) );
+		V_RETURN( device->CreateUnorderedAccessView( tex, NULL, &mHDRUAV ) );
 
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex) );
-	V_RETURN( device->CreateRenderTargetView( tex, NULL, &mLightRT ) );
-	V_RETURN( device->CreateShaderResourceView( tex, NULL, &mLightSRV ) );
-	
-	// Views saves reference
-	SAFE_RELEASE( tex );
+		// Views saves reference
+		SAFE_RELEASE( tex );
+	}
+
+	//
+	// HDR Tone mapping buffers (skips cbuffers for now, effects11 handles that nicely)
+	//
+	{
+		UINT threadGroups = (UINT)ceil((float)(width * height / 16.0f) / 1024.0f);
+
+		// Intermediate luminance
+		D3D11_BUFFER_DESC bufDesc;
+		ZeroMemory( &bufDesc, sizeof(D3D11_BUFFER_DESC) );
+		bufDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+		bufDesc.StructureByteStride = 4; // float
+		bufDesc.ByteWidth = 4 * threadGroups;
+		bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		ID3D11Buffer *buf;
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
+		ZeroMemory( &uavDesc, sizeof(D3D11_UNORDERED_ACCESS_VIEW_DESC) );
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.NumElements = threadGroups;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.Flags = 0;
+		
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		ZeroMemory( &srvDesc, sizeof(D3D11_SHADER_RESOURCE_VIEW_DESC) );
+		srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+		srvDesc.Buffer.FirstElement = 0;
+		srvDesc.Buffer.NumElements = threadGroups;
+
+		// Intermediate average luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateAverageLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateAverageLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Intermediate maximum luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mIntermediateMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mIntermediateMaximumLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Final luminance
+		bufDesc.ByteWidth = 4; // One float, only thing that differs from first is size.
+		uavDesc.Buffer.NumElements = 1;
+		srvDesc.Buffer.NumElements = 1;
+
+		float data = 1.0f;
+		D3D11_SUBRESOURCE_DATA initData;
+		ZeroMemory( &initData, sizeof(D3D11_SUBRESOURCE_DATA) );
+		initData.pSysMem = &data;
+
+		// Average luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mAverageLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mAverageLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Maximum luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, NULL, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mMaximumLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Previous frame average luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, &initData, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mPrevAverageLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mPrevAverageLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+
+		// Previous frame maximum luminance
+		V_RETURN( device->CreateBuffer( &bufDesc, &initData, &buf ) );
+		V_RETURN( device->CreateUnorderedAccessView( buf, &uavDesc, &mPrevMaximumLuminanceUAV ) );
+		V_RETURN( device->CreateShaderResourceView( buf, &srvDesc, &mPrevMaximumLuminanceSRV ) );
+		SAFE_RELEASE( buf );
+	}
 
 	//
 	// Depth/stencil buffer and view
 	//
+	{
+		D3D11_TEXTURE2D_DESC dsTexDesc = texDesc;
+		dsTexDesc.Width = mBackBufferSurfaceDesc->Width;
+		dsTexDesc.Height = mBackBufferSurfaceDesc->Height;
+		dsTexDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+		dsTexDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		V_RETURN( device->CreateTexture2D( &dsTexDesc, 0, &tex ) );
 
-	texDesc.Width = mBackBufferSurfaceDesc->Width;
-	texDesc.Height = mBackBufferSurfaceDesc->Height;
-	texDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-	texDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-	V_RETURN( device->CreateTexture2D( &texDesc, 0, &tex ) );
+		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
+		dsvDesc.Flags = 0;
+		dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+		dsvDesc.Texture2D.MipSlice = 0;
+		V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
 
-	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc;
-	dsvDesc.Flags = 0;
-	dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-	dsvDesc.Texture2D.MipSlice = 0;
-	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSV ) );
+		dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
+		V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSVReadOnly ) );
 
-	dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH | D3D11_DSV_READ_ONLY_STENCIL;
-	V_RETURN( device->CreateDepthStencilView( tex, &dsvDesc, &mMainDepthDSVReadOnly ) );
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+		srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		srvDesc.Texture2D.MipLevels = 1;
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mMainDepthSRV ) );
 
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-	srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-	srvDesc.Texture2D.MipLevels = 1;
-	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	V_RETURN( device->CreateShaderResourceView( tex, &srvDesc, &mMainDepthSRV ) );
-
-	// Views saves reference
-	SAFE_RELEASE( tex );
-
+		// Views saves reference
+		SAFE_RELEASE( tex );
+	}
 
 	return S_OK;
 }
 
-void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction )
+HRESULT App::CreateLightBuffers( ID3D11Device *pd3dDevice )
+{
+	HRESULT hr;
+
+	// Description for the underlying buffer.
+	D3D11_BUFFER_DESC bufDesc;
+	ZeroMemory( &bufDesc, sizeof( D3D11_BUFFER_DESC ) );
+	bufDesc.Usage = D3D11_USAGE_DYNAMIC; // I want to CPU to write
+	bufDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	bufDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	bufDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	ID3D11Buffer *buffy;
+
+	// SRV for shader to read stuff
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
+	ZeroMemory( &srvDesc, sizeof( D3D11_SHADER_RESOURCE_VIEW_DESC ) );
+	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+	srvDesc.Buffer.FirstElement = 0;
+
+	// Point lights
+	{
+		bufDesc.StructureByteStride = sizeof( PointLight );
+		bufDesc.ByteWidth = max(mPointLights.size(), 1) * sizeof( PointLight );
+		V_RETURN( pd3dDevice->CreateBuffer( &bufDesc, NULL, &buffy ) );
+		
+		srvDesc.Buffer.NumElements = max(mPointLights.size(), 1);
+		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mPointLightsSRV ) );
+		
+		SAFE_RELEASE( buffy );
+	}
+
+	// Spotlights
+	{
+		bufDesc.StructureByteStride = sizeof( SpotLight );
+		bufDesc.ByteWidth = max(mSpotLights.size(), 1) * sizeof( SpotLight );
+		V_RETURN( pd3dDevice->CreateBuffer( &bufDesc, NULL, &buffy ) );
+
+		srvDesc.Buffer.NumElements = max(mSpotLights.size(), 1);
+		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mSpotLightsSRV ) );
+
+		SAFE_RELEASE( buffy );
+	}
+
+	// Capsule lights
+	{
+		bufDesc.StructureByteStride = sizeof( CapsuleLight );
+		bufDesc.ByteWidth = max(mCapsuleLights.size(), 1) * sizeof( CapsuleLight );
+		V_RETURN( pd3dDevice->CreateBuffer( &bufDesc, NULL, &buffy ) );
+
+		srvDesc.Buffer.NumElements = max(mCapsuleLights.size(), 1);
+		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mCapsuleLightsSRV ) );
+		
+		SAFE_RELEASE( buffy );
+	}
+}
+
+void App::RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color, XMFLOAT3 direction, float intensity )
 {
 	mDirectionalLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mDirectionalLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(XMLoadFloat3(&direction), mCamera.View()));
+	mDirectionalLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
@@ -1135,30 +1549,15 @@ void App::RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 
 	mPointLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
-		
-	//// Calculate the distance between the camera and light center.
-	//XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	//XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
-
-	//// If we are inside the light volume, draw the sphere's inside face
-	//bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullFront );
-	//else
-	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	// Render the light volume.
 	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mSphereModel->Render( pd3dImmediateContext );
-
-	//// Reset culling mode back to normal, else other meshes might not render correctly.
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullBack );
 }
 
 void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg )
+		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float cosOuter,
+		float cosInner )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -1167,8 +1566,8 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	// Add a small epsilon to x because if the light is aimed straight up, the
 	// rotation matrix is gonna have a bad time.
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
-	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
-	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float outerAngleRad = acosf( cosOuter );
+	float range = 1 / rangeRcp;
 	float xyScale = tanf(outerAngleRad) * range;
 	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
@@ -1179,49 +1578,19 @@ void App::RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 c
 	mSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 	
 	mSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
-	mSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
-	mSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
+	mSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosOuter);
+	mSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosInner);
 	mSpotlightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
 	mSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
-
-	//// Test to check if the camera is inside light volume.
-	//bool inside = false;
-	//XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	//// Project the vector from cone tip to test point onto light direction
-	//// to find the point's distance along the axis.
-	//XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
-	//// Reject values outside 0 <= coneDist <= coneHeight
-	//if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
-	//{
-	//	// Radius at point.
-	//	float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
-	//	// Calculate the point's orthogonal distance to axis and compare to
-	//	// cone radius (radius at point).
-	//	XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
-	//	XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
-
-	//	inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
-	//}
-	
-	//// If we are inside the light volume, draw the cone's inside face.
-	//if (inside)
-	//{
-	//	pd3dImmediateContext->RSSetState( mCullFront );
-	//}
-	//else
-	//	pd3dImmediateContext->RSSetState( mCullBack );
+	mSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
+	mSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mConeModel->Render( pd3dImmediateContext );
-
-	//// Reset culling mode back to normal, else other meshes might not render correctly.
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullBack );
 }
 
 void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
-	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float range, float length )
+	XMFLOAT3 color, XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float length, float intensity )
 {
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x, direction.y, direction.z, 0.0f));
 
@@ -1229,9 +1598,10 @@ void App::RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext,
 	
 	mCapsuleLightFX->GetVariableByName("gLightDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
 	mCapsuleLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
+	mCapsuleLightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
 	mCapsuleLightFX->GetVariableByName("gLightLength")->AsScalar()->SetFloat(length);
 	mCapsuleLightFX->GetVariableByName("gLightColor")->AsVector()->SetFloatVector((float*)&color);
+	mCapsuleLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	pd3dImmediateContext->Draw( 3, 0 );
@@ -1254,33 +1624,18 @@ void App::RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D1
 	mProjPointLightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
 	mProjPointLightFX->GetVariableByName("gLightRadius")->AsScalar()->SetFloat(radius);
 	mProjPointLightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
-		
-	//// Calculate the distance between the camera and light center.
-	//XMVECTOR vCameraToCenter = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	//XMVECTOR cameraToCenterSq = XMVector3Dot(vCameraToCenter, vCameraToCenter);
-
-	//// If we are inside the light volume, draw the sphere's inside face
-	//bool inside = XMVectorGetX(cameraToCenterSq) < radius * radius;
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullFront );
-	//else
-	//	pd3dImmediateContext->RSSetState( mCullBack );
 
 	// Render the light volume.
 	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mSphereModel->Render( pd3dImmediateContext );
 
-	//// Reset culling mode back to normal, else other meshes might not render correctly.
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullBack );
-
-	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
+	mProjPointLightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource( 0 );
 	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 }
 
 void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg )
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float cosOuter,
+		float cosInner, float intensity )
 {
 	static XMVECTOR zero = XMVectorSet(0, 0, 0, 1);
 	static XMVECTOR up = XMVectorSet(0, 1, 0, 0);
@@ -1289,8 +1644,8 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	// Add a small epsilon to x because if the light is aimed straight up, the
 	// rotation matrix is gonna have a bad time.
 	XMVECTOR directionXM = XMVector3Normalize(XMVectorSet(direction.x + 0.000000000000000000001f, direction.y, direction.z, 0.0f));
-	float outerAngleRad = XMConvertToRadians(outerAngleDeg);
-	float innerAngleRad = XMConvertToRadians(innerAngleDeg);
+	float outerAngleRad = acosf( cosOuter );
+	float range = 1 / rangeRcp;
 	float xyScale = tanf(outerAngleRad) * range;
 	XMMATRIX coneWorld = XMMatrixScaling(xyScale, xyScale, range) *
 		XMMatrixTranspose(XMMatrixLookAtLH(zero, directionXM, up)) *
@@ -1298,10 +1653,6 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	XMMATRIX worldView = XMMatrixMultiply(coneWorld, mCamera.View());
 	// 2 * halfAngle = fov / 2 ==> fov = 4 * halfAngle
 	XMMATRIX lightViewProj = XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView) * XMMatrixPerspectiveFovLH(outerAngleRad * 4, 1.0f, 0.0001f * range, range);
-	//XMMatrixSet(tanf(XM_PIDIV2 - 2*outerAngleRad), 0, 0, 0,
-	//			0, tanf(XM_PIDIV2 - 2*outerAngleRad), 0, 0,
-	//			0, 0, range / (range - 0.0001f * range), 1,
-	//			0, 0, -0.0001f * range * range / (range - 0.0001f * range), 0);
 	
 	mProjSpotlightFX->GetVariableByName("gLightViewProj")->AsMatrix()->SetMatrix((float*)&lightViewProj);
 	mProjSpotlightFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&XMMatrixMultiply(coneWorld, mCamera.ViewProj()));
@@ -1309,68 +1660,287 @@ void App::RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11
 	mProjSpotlightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 	
 	mProjSpotlightFX->GetVariableByName("gDirectionVS")->AsVector()->SetFloatVector((float*)&XMVector4Transform(directionXM, mCamera.View()));
-	mProjSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosf(outerAngleRad));
-	mProjSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosf(innerAngleRad));
+	mProjSpotlightFX->GetVariableByName("gCosOuter")->AsScalar()->SetFloat(cosOuter);
+	mProjSpotlightFX->GetVariableByName("gCosInner")->AsScalar()->SetFloat(cosInner);
 	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(tex);
 	mProjSpotlightFX->GetVariableByName("gLightPositionVS")->AsVector()->SetFloatVector((float*)&XMVector3Transform(XMLoadFloat3(&position), mCamera.View()));
-	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(1.0f / range);
-	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(1.0f);
-
-	//// Test to check if the camera is inside light volume.
-	//bool inside = false;
-	//XMVECTOR tipToPoint = mCamera.GetPositionXM() - XMLoadFloat3(&position);
-	//// Project the vector from cone tip to test point onto light direction
-	//// to find the point's distance along the axis.
-	//XMVECTOR coneDist = XMVector3Dot(tipToPoint, directionXM);
-	//// Reject values outside 0 <= coneDist <= coneHeight
-	//if (0 <= XMVectorGetX(coneDist) && XMVectorGetX(coneDist) <= range)
-	//{
-	//	// Radius at point.
-	//	float radiusAtPoint = (XMVectorGetX(coneDist) / range) * xyScale;
-	//	// Calculate the point's orthogonal distance to axis and compare to
-	//	// cone radius (radius at point).
-	//	XMVECTOR pointOrthDirection = tipToPoint - XMVectorGetX(coneDist) * directionXM;
-	//	XMVECTOR orthDistSq = XMVector3Dot(pointOrthDirection, pointOrthDirection);
-
-	//	inside = (XMVectorGetX(orthDistSq) < radiusAtPoint * radiusAtPoint);
-	//}
-	//
-	//// If we are inside the light volume, draw the cone's inside face.
-	//if (inside)
-	//{
-	//	pd3dImmediateContext->RSSetState( mCullFront );
-	//}
-	//else
-	//	pd3dImmediateContext->RSSetState( mCullBack );
+	mProjSpotlightFX->GetVariableByName("gLightRangeRcp")->AsScalar()->SetFloat(rangeRcp);
+	mProjSpotlightFX->GetVariableByName("gLightIntensity")->AsScalar()->SetFloat(intensity);
 
 	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 	mConeModel->Render( pd3dImmediateContext );
-
-	//// Reset culling mode back to normal, else other meshes might not render correctly.
-	//if (inside)
-	//	pd3dImmediateContext->RSSetState( mCullBack );
 	
-	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource(0);
+	mProjSpotlightFX->GetVariableByName("gProjLightTex")->AsShaderResource()->SetResource( 0 );
 	mProjSpotlightTech->GetPassByIndex( 0 )->Apply(0, pd3dImmediateContext);
 }
 
 void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 {
-	// Bind the light accumulation buffer as a render target. Using additive blending,
+	// Bind the HDR buffer as render target. Using additive blending,
 	// the contribution of every light will be summed and stored in this buffer.
-	pd3dImmediateContext->OMSetRenderTargets(1, &mLightRT, mMainDepthDSVReadOnly);
+	pd3dImmediateContext->OMSetRenderTargets( 1, &mHDRRT, mMainDepthDSVReadOnly );
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	pd3dImmediateContext->ClearRenderTargetView(mLightRT, clearColor);
-	pd3dImmediateContext->OMSetBlendState(mAdditiveBlend, 0, 0xffffffff);
+	pd3dImmediateContext->ClearRenderTargetView( mHDRRT, clearColor );
+	pd3dImmediateContext->OMSetBlendState( mAdditiveBlend, 0, 0xffffffff );
 	
 	// Common for every light
-	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(mCamera.Proj()), mCamera.Proj());
-	// projA and projB are projection constants based on camera near and far
-	// clip planes, used to reconstruct view space position from depth in shaders.
-	// projA = zf / (zf - zn)
-	// projB = -zn * zf / (zf - zn)
-	float projA = mCamera.Proj()._33;
-	float projB = mCamera.Proj()._43;
+	XMVECTOR det;
+	XMMATRIX invProj = XMMatrixInverse( &det, mCamera.Proj() );
+
+	//
+	// Ambient light
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mNoDepthTest, 0 );
+	pd3dImmediateContext->RSSetState( mCullBack );
+	
+	mAmbientLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mAmbientLightFX->GetVariableByName("gAmbientColor")->AsVector()->SetFloatVector((float*)&XMFLOAT3(1.3f, 1.3f, 1.3f));
+
+	mAmbientLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Draw( 3, 0 );
+	
+	mAmbientLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mAmbientLightFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Directional light stuff
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mNoDepthTest, 0 );
+	pd3dImmediateContext->RSSetState( mCullBack );
+
+	// Set shader variables common for every directional light
+	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mDirectionalLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
+	mDirectionalLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+
+	// Render directional light
+	RenderDirectionalLight( pd3dImmediateContext, mDirectionalLight.Color, mDirectionalLight.DirectionVS, mDirectionalLight.Intensity );
+
+	// Unbind the G-Buffer textures
+	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render point lights
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
+
+	// Set shader variables common for every point light
+	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+
+	// Every point light except null light
+	for (int i = 0; i < mPointLights.size() - 1; ++i)
+		RenderPointLight( pd3dImmediateContext, mPointLights[i].Color, mPointLights[i].PositionVS, mPointLights[i].Range, mPointLights[i].Intensity );
+	
+	// Unbind the G-Buffer textures
+	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render spotlights
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
+	
+	// Set shader variables common for every spotlight
+	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+
+	// Every spotlight except null light
+	for (int i = 0; i < mSpotLights.size() - 1; ++i)
+		RenderSpotlight( pd3dImmediateContext, mSpotLights[i].Color, mSpotLights[i].Intensity,
+			mSpotLights[i].PositionVS, mSpotLights[i].DirectionVS, mSpotLights[i].RangeRcp,
+			mSpotLights[i].CosOuter, mSpotLights[i].CosInner );
+
+	// Unbind G-Buffer textures
+	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render capsule lights
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mNoDepthTest, 0 );
+	pd3dImmediateContext->RSSetState( mCullBack );
+
+	// Set shader variables common for every capsule light
+	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
+	
+	// Every capsule light except null light
+	for (int i = 0; i < mCapsuleLights.size() - 1; ++i)
+		RenderCapsuleLight( pd3dImmediateContext, mCapsuleLights[i].Color, mCapsuleLights[i].PositionVS,
+			mCapsuleLights[i].DirectionVS, mCapsuleLights[i].RangeRcp, mCapsuleLights[i].Length, mCapsuleLights[i].Intensity );
+
+	// Unbind the G-Buffer textures
+	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render projective point lights
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
+
+	// Set shader variables common for every projective point light
+	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
+
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
+		mProjPointLight.Range, mProjPointLight.Intensity, fTime );
+
+	// Unbind the G-Buffer textures
+	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mProjPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Render projective spotlights
+	//
+
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
+	
+	// Set shader variables common for every projective spotlight
+	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
+	mProjSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
+	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
+
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, mProjSpotlight.PositionVS,
+		mProjSpotlight.DirectionVS, mProjSpotlight.RangeRcp, mProjSpotlight.CosOuter,
+		mProjSpotlight.CosInner, mProjSpotlight.Intensity );
+
+	// Unbind G-Buffer textures
+	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mProjSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	//
+	// Final stuff
+	//
+
+	// Reset blend and rasterizer states to default
+	pd3dImmediateContext->OMSetBlendState( 0, 0, 0xffffffff );
+	pd3dImmediateContext->RSSetState( 0 );
+	pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
+}
+
+void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
+{
+	// Unbind any potentially bound render targets
+	pd3dImmediateContext->OMSetRenderTargets( 0, 0, 0 );
+
+	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	pd3dImmediateContext->ClearUnorderedAccessViewFloat( mHDRUAV, clearColor );
+
+	// Write light data to GPU buffer
+	D3D11_MAPPED_SUBRESOURCE mappedData;
+	ID3D11Resource *resource;
+
+	// Update point lights
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
+	mPointLightsSRV->GetResource( &resource );
+	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
+	memcpy( mappedData.pData, mPointLights.data(), sizeof( PointLight ) * mPointLights.size() );
+	pd3dImmediateContext->Unmap( resource, 0 );
+	SAFE_RELEASE( resource );
+
+	// Update spotlights
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
+	mSpotLightsSRV->GetResource( &resource );
+	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
+	memcpy( mappedData.pData, mSpotLights.data(), sizeof( SpotLight ) * mSpotLights.size() );
+	pd3dImmediateContext->Unmap( resource, 0 );
+	SAFE_RELEASE( resource );
+
+	// Update capsule lights
+	memset( &mappedData, 0, sizeof( D3D11_MAPPED_SUBRESOURCE ) );
+	mCapsuleLightsSRV->GetResource( &resource );
+	pd3dImmediateContext->Map( resource, NULL, D3D11_MAP_WRITE_DISCARD, 0, &mappedData );
+	memcpy( mappedData.pData, mCapsuleLights.data(), sizeof( CapsuleLight ) * mCapsuleLights.size() );
+	pd3dImmediateContext->Unmap( resource, 0 );
+	SAFE_RELEASE( resource );
+
+	int pointLightCount = min( mPointLights.size() - 1, 1024 );
+	int spotLightCount = min( mSpotLights.size() - 1, 1024 );
+	int capsuleLightCount = min( mCapsuleLights.size() - 1, 1024 );
+
+	// Set shader constants (GBuffer, lights, matrices and so forth)
+	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
+	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( mGBuffer->NormalSRV() );
+	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
+	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( mSSAO->AOMap() );
+	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( mHDRUAV );
+
+	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( mPointLightsSRV );
+	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( mSpotLightsSRV );
+	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( mCapsuleLightsSRV );
+
+	mTiledDeferredFX->GetVariableByName("gPointLightCount")->AsScalar()->SetInt( pointLightCount );
+	mTiledDeferredFX->GetVariableByName("gSpotLightCount")->AsScalar()->SetInt( spotLightCount );
+	mTiledDeferredFX->GetVariableByName("gCapsuleLightCount")->AsScalar()->SetInt( capsuleLightCount );
+	
+	int groupCount[2];
+	groupCount[0] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Width / 16.f) );
+	groupCount[1] = static_cast<UINT>( ceil(mBackBufferSurfaceDesc->Height / 16.f) );
+	mTiledDeferredFX->GetVariableByName("gView")->AsMatrix()->SetMatrix( (float*)&mCamera.View() );
+	mTiledDeferredFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix( (float*)&mCamera.Proj() );
+	mTiledDeferredFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &XMMatrixDeterminant( mCamera.Proj() ), mCamera.Proj() ) );
+	mTiledDeferredFX->GetVariableByName("gBackbufferWidth")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Width) );
+	mTiledDeferredFX->GetVariableByName("gBackbufferHeight")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Height) );
+
+	// Apply technique and execute compute shader
+	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+	pd3dImmediateContext->Dispatch( groupCount[0], groupCount[1], 1 );
+
+	// Unbind stuff
+	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	
+	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+
+	// Render directional, projective point, and projective spotlights as regular deferred (geometry)
+
+	// Bind the HDR buffer as render target. Using additive blending, the contribution
+	// of every light will be summed and stored in this buffer.
+	pd3dImmediateContext->OMSetRenderTargets( 1, &mHDRRT, mMainDepthDSVReadOnly );
+	pd3dImmediateContext->OMSetBlendState( mAdditiveBlend, 0, 0xffffffff );
+	
+	// Common for every light
+	XMVECTOR det;
+	XMMATRIX invProj = XMMatrixInverse( &det, mCamera.Proj() );
 
 	//
 	// Directional light stuff
@@ -1384,11 +1954,10 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mDirectionalLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mDirectionalLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 	mDirectionalLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
-	mDirectionalLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
-	mDirectionalLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
+	mDirectionalLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	// Render directional lights
-	RenderDirectionalLight( pd3dImmediateContext, XMFLOAT3(0.4f, 0.4f, 0.4f), XMFLOAT3(0, -1, 1) );
+	// Render directional light
+	RenderDirectionalLight( pd3dImmediateContext, mDirectionalLight.Color, mDirectionalLight.DirectionVS, mDirectionalLight.Intensity );
 
 	// Unbind the G-Buffer textures
 	mDirectionalLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1397,137 +1966,20 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mDirectionalLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 
 	//
-	// Render point lights
-	//
-
-	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
-	pd3dImmediateContext->RSSetState(mCullFront);
-
-	// Set shader variables common for every point light
-	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
-	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
-	mPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
-
-	XMFLOAT3 colors[10];
-	colors[0] = XMFLOAT3( 0.133f, 0.545f, 0.133f ); // ForestGreen
-	colors[1] = XMFLOAT3( 0, 0, 1 ); // Blue
-	colors[2] = XMFLOAT3( 1, 0.75294f, 0.796078f ); // Pink
-	colors[3] = XMFLOAT3( 1, 1, 0 ); // Yellow
-	colors[4] = XMFLOAT3( 1, 0.6470588f, 0 ); // Orange
-	colors[5] = XMFLOAT3( 0, 0.5f, 0 ); // Green
-	colors[6] = XMFLOAT3( 0.862745f, 0.078431f, 0.235294f ); // Crimson
-	colors[7] = XMFLOAT3( 0.39215686f, 0.5843137f, 0.92941176f ); // CornFlowerBlue
-	colors[8] = XMFLOAT3( 1, 0.843137f, 0 ); // Gold
-	colors[9] = XMFLOAT3( 0.94117647f, 1, 0.94117647f ); // Honeydew
-
-	float lightRadiusFirstSet = 6.0f;
-	float lightIntensityFirstSet = 2.0f;
-
-	for (UINT i = 0; i < 10; ++i)
-	{
-		XMVECTOR sphDir = XMVector3Normalize(XMVectorSet(sinf(i * XM_2PI / 10 + fTime), 0.0f, cosf(i * XM_2PI / 10 + fTime), 0.0f));
-		float circleRadius = 19.3f;
-
-		float power = 6;
-		float powerRcp = 1 / power;
-		float x = XMVectorGetX(sphDir);
-		float xSign = x / abs(x);
-		float xPowered = powf( abs(x), power );
-		float z = XMVectorGetZ(sphDir);
-		float zSign = z / abs(z);
-		float zPowered = powf( abs(z), power );
-
-		// Calculate point on superellipse
-		float xR = powf( xPowered / (xPowered + zPowered), powerRcp );
-		float yR = powf( zPowered / (zPowered + xPowered), powerRcp );
-
-		// Scale by circle radius to get world position. Also multiply by the
-		// original sign of the respective components to compensate for removed signs.
-		XMFLOAT3 pos = XMFLOAT3(xSign * xR * circleRadius, 5, zSign * yR * circleRadius);
-
-		RenderPointLight( pd3dImmediateContext, colors[i], pos, lightRadiusFirstSet, lightIntensityFirstSet );
-	}
-
-	// Unbind the G-Buffer textures
-	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-	mPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-	mPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-	mPointLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-	//
-	// Render spotlights
-	//
-
-	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
-	pd3dImmediateContext->RSSetState(mCullFront);
-	
-	XMFLOAT3 color(0.0f, 1.0f, 0.0f);
-	XMFLOAT3 position(0.0f, 10.0f, 40.0f);
-	XMFLOAT3 direction(0.0f, 0.0f, 1.0f);
-	float range = 15.0f;
-	float outerAngleDeg = 20.0f; // Angle from center outwards.
-	float innerAngleDeg = 10.0f;
-
-	direction.x = sinf(static_cast<float>( fTime ));
-	direction.y = -1;
-	direction.z = cosf(static_cast<float>( fTime ));
-	
-	// Set shader variables common for every spotlight
-	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
-	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-
-	RenderSpotlight( pd3dImmediateContext, color, position, direction, range,
-		outerAngleDeg, innerAngleDeg );
-
-	// Unbind G-Buffer textures
-	mSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-	mSpotlightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-	mSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-	mSpotlightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-	//
-	// Render capsule lights
-	//
-
-	pd3dImmediateContext->OMSetDepthStencilState(mNoDepthTest, 0);
-	pd3dImmediateContext->RSSetState(mCullBack);
-
-	// Set shader variables common for every capsule light
-	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
-	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
-	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mCapsuleLightFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix((float*)&invProj);
-	
-	// Render capsule lights
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(1.0f, 0.0f, 0.0f), XMFLOAT3(-10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
-	RenderCapsuleLight( pd3dImmediateContext, XMFLOAT3(0.0f, 0.0f, 1.0f), XMFLOAT3(10.4f, 2.0f, 38.42f),
-		XMFLOAT3( 0, 1, 0 ), 0.8f, 6.0f );
-
-	// Unbind the G-Buffer textures
-	mCapsuleLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
-	mCapsuleLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
-	mCapsuleLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
-	mCapsuleLightTech->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-
-	//
 	// Render projective point lights
 	//
 
-	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
-	pd3dImmediateContext->RSSetState(mCullFront);
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
 
 	// Set shader variables common for every projective point light
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
 	mProjPointLightFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource(mGBuffer->NormalSRV());
 	mProjPointLightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
-	mProjPointLightFX->GetVariableByName("gProjA")->AsScalar()->SetFloat(projA);
-	mProjPointLightFX->GetVariableByName("gProjB")->AsScalar()->SetFloat(projB);
+	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
-	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, XMFLOAT3( 45, 5.0f, 0 ), 20.0f, 1.0f, fTime );
+	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
+		mProjPointLight.Range, mProjPointLight.Intensity, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1539,11 +1991,8 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	// Render projective spotlights
 	//
 
-	pd3dImmediateContext->OMSetDepthStencilState(mDepthGreaterEqual, 0);
-	pd3dImmediateContext->RSSetState(mCullFront);
-
-	position = XMFLOAT3( 45, 5, 0);
-	direction.y = -1.0f;
+	pd3dImmediateContext->OMSetDepthStencilState( mDepthGreaterEqual, 0 );
+	pd3dImmediateContext->RSSetState( mCullFront );
 	
 	// Set shader variables common for every projective spotlight
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource(mGBuffer->ColorSRV());
@@ -1551,8 +2000,9 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjSpotlightFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource(mMainDepthSRV);
 
 	// Reuse position and stuff from previous spotlight
-	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, position, direction, range,
-		outerAngleDeg, innerAngleDeg );
+	RenderProjSpotlight( pd3dImmediateContext, mProjSpotlightColor, mProjSpotlight.PositionVS,
+		mProjSpotlight.DirectionVS, mProjSpotlight.RangeRcp, mProjSpotlight.CosOuter,
+		mProjSpotlight.CosInner, mProjSpotlight.Intensity );
 
 	// Unbind G-Buffer textures
 	mProjSpotlightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1565,7 +2015,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	//
 
 	// Reset blend and rasterizer states to default
-	pd3dImmediateContext->OMSetBlendState(0, 0, 0xffffffff);
+	pd3dImmediateContext->OMSetBlendState( 0, 0, 0xffffffff );
 	pd3dImmediateContext->RSSetState( 0 );
-	pd3dImmediateContext->OMSetDepthStencilState(0, 0);
+	pd3dImmediateContext->OMSetDepthStencilState( 0, 0 );
 }

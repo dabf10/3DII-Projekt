@@ -76,6 +76,43 @@ public:
 	bool Init( );
 
 private:
+	struct PointLight
+	{
+		XMFLOAT3 PositionVS;
+		float Range;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
+	struct SpotLight
+	{
+		XMFLOAT3 DirectionVS;
+		float CosOuter;
+		float CosInner;
+		XMFLOAT3 Color;
+		XMFLOAT3 PositionVS;
+		float RangeRcp;
+		float Intensity;
+	};
+
+	struct CapsuleLight
+	{
+		XMFLOAT3 PositionVS;
+		float RangeRcp;
+		XMFLOAT3 DirectionVS;
+		float Length;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
+	struct DirectionalLight
+	{
+		XMFLOAT3 DirectionVS;
+		XMFLOAT3 Color;
+		float Intensity;
+	};
+
+private:
 	void OnMouseMove(WPARAM btnState, int x, int y);
 
 	bool BuildVertexLayout( ID3D11Device *device );
@@ -87,19 +124,26 @@ private:
 	HRESULT CreateGBuffer( ID3D11Device *device, UINT width, UINT height );
 	void RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
 	void RenderDirectionalLight( ID3D11DeviceContext *pd3dImmediateContext,
-		XMFLOAT3 color, XMFLOAT3 direction );
+		XMFLOAT3 color, XMFLOAT3 direction, float intensity );
 	void RenderPointLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
 		XMFLOAT3 position, float radius, float intensity );
 	void RenderSpotlight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
+		float intensity, XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
 		float innerAngleDeg );
 	void RenderCapsuleLight( ID3D11DeviceContext *pd3dImmediateContext, XMFLOAT3 color,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float length );
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float length, float intensity );
 	void RenderProjPointLight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
 		XMFLOAT3 position, float radius, float intensity, float fTime ); // Remove time, it's just to test light animation
 	void RenderProjSpotlight( ID3D11DeviceContext *pd3dImmediateContext, ID3D11ShaderResourceView *tex,
-		XMFLOAT3 position, XMFLOAT3 direction, float range, float outerAngleDeg,
-		float innerAngleDeg );
+		XMFLOAT3 position, XMFLOAT3 direction, float rangeRcp, float outerAngleDeg,
+		float innerAngleDeg, float intensity );
+	void RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fTime );
+
+	void ToneMap( ID3D11DeviceContext *pd3dImmediateContext, float dt );
+
+	HRESULT CreateLightBuffers( ID3D11Device *pd3dDevice );
+	void AnimateLights( float fTime );
+	void InitializeLights( );
 
 private:
 	Model *mBth;
@@ -151,8 +195,21 @@ private:
 	CDXUTTextHelper *mTxtHelper;
 
 	// Accumulates lights
-	ID3D11RenderTargetView *mLightRT;
-	ID3D11ShaderResourceView *mLightSRV;
+	ID3D11RenderTargetView *mHDRRT;
+	ID3D11ShaderResourceView *mHDRSRV;
+	ID3D11UnorderedAccessView *mHDRUAV;
+	ID3D11UnorderedAccessView *mIntermediateAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mIntermediateAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mIntermediateMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mIntermediateMaximumLuminanceSRV;
+	ID3D11UnorderedAccessView *mAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mPrevAverageLuminanceUAV;
+	ID3D11ShaderResourceView *mPrevAverageLuminanceSRV;
+	ID3D11UnorderedAccessView *mMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mMaximumLuminanceSRV;
+	ID3D11UnorderedAccessView *mPrevMaximumLuminanceUAV;
+	ID3D11ShaderResourceView *mPrevMaximumLuminanceSRV;
 	// Regular depth buffer (we create it ourselves because we use it as SRV)
 	ID3D11DepthStencilView *mMainDepthDSV;
 	ID3D11DepthStencilView *mMainDepthDSVReadOnly;
@@ -163,6 +220,7 @@ private:
 	ID3DX11Effect *mFillGBufferFX;
 	ID3DX11Effect* mAnimationFX;
 
+	ID3DX11Effect *mAmbientLightFX;
 	ID3DX11Effect *mDirectionalLightFX;
 	ID3DX11EffectTechnique *mDirectionalLightTech;
 	ID3DX11Effect *mPointLightFX;
@@ -175,9 +233,12 @@ private:
 	ID3DX11EffectTechnique *mProjPointLightTech;
 	ID3DX11Effect *mProjSpotlightFX;
 	ID3DX11EffectTechnique *mProjSpotlightTech;
+	ID3DX11Effect *mTiledDeferredFX;
 
-	ID3DX11Effect *mCombineLightFX;
 	ID3DX11Effect *mOldFilmFX;
+
+	ID3DX11Effect *mLuminanceDownscaleFX;
+	ID3DX11Effect *mHDRToneMapFX;
 
 	ID3D11DepthStencilState *mNoDepthTest;
 	ID3D11DepthStencilState *mDepthGreaterEqual;
@@ -193,6 +254,18 @@ private:
 	GBuffer *mGBuffer;
 
 	PostProcessRT *mPostProcessRT;
+
+	std::vector<PointLight> mPointLights;
+	ID3D11ShaderResourceView *mPointLightsSRV;
+	std::vector<SpotLight> mSpotLights;
+	ID3D11ShaderResourceView *mSpotLightsSRV;
+	std::vector<CapsuleLight> mCapsuleLights;
+	ID3D11ShaderResourceView *mCapsuleLightsSRV;
+	DirectionalLight mDirectionalLight;
+	PointLight mProjPointLight;
+	SpotLight mProjSpotlight;
+
+	bool deferred;
 };
 
 #endif // _APP_H_

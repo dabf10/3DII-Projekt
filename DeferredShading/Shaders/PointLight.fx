@@ -1,35 +1,23 @@
 float4x4 gWVP;
 float4x4 gWorldView;
+float4x4 gProj;
+
 float3 gLightColor;
 float3 gLightPositionVS;
 float gLightRadius; // How far the light reaches
-float gLightIntensity = 1.0f; // Control the brightness of the light
-float gProjA;
-float gProjB;
+float gLightIntensity; // Control the brightness of the light
 
 Texture2D gColorMap; // Diffuse color, and specular intensity in alpha
 Texture2D gNormalMap; // Normals, and specular power in alpha
 Texture2D gDepthMap;
 
-SamplerState gColorSampler
+struct GBuffer
 {
-	Filter = MIN_MAG_MIP_LINEAR;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gDepthSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
-};
-
-SamplerState gNormalSampler
-{
-	Filter = MIN_MAG_MIP_POINT;
-	AddressU = CLAMP;
-	AddressV = CLAMP;
+	float3 Diffuse;
+	float3 Normal;
+	float3 PosVS;
+	float SpecularIntensity;
+	float SpecularPower;
 };
 
 struct VS_IN
@@ -40,7 +28,7 @@ struct VS_IN
 struct VS_OUT
 {
 	float4 PosH : SV_POSITION;
-	float3 PosVS : POSITION;
+	float3 PosV : POSITION;
 };
 
 VS_OUT VS( VS_IN input )
@@ -48,59 +36,64 @@ VS_OUT VS( VS_IN input )
 	VS_OUT output = (VS_OUT)0;
 
 	output.PosH = mul(float4(input.PosL, 1.0f), gWVP);
-	output.PosVS = mul(float4(input.PosL, 1.0f), gWorldView).xyz;
+	output.PosV = mul(float4(input.PosL, 1.0f), gWorldView).xyz;
 
 	return output;
 }
 
-float4 PS( VS_OUT input ) : SV_TARGET
+float3 EvaluatePointLight( GBuffer gbuffer )
 {
-	// Clamp the view ray to the plane at Z = 1
-	float3 viewRay = float3(input.PosVS.xy / input.PosVS.z, 1.0f);
-
-	float2 texCoord = float2(input.PosH.x / 1280.0f, input.PosH.y / 720.0f);
-	// Sample the depth and convert to linear view space Z (assume it gets
-	// samples as a floating point value in the range [0,1])
-	float depth = gDepthMap.Sample( gDepthSampler, texCoord ).r;
-	float linearDepth = gProjB / (depth - gProjA);
-	float3 posVS = viewRay * linearDepth;
-
-	// Get normal data from gNormalMap
-	float4 normalData = gNormalMap.Sample( gNormalSampler, texCoord );
-	// Transform normal back into [-1,1] range
-	float3 normal = 2.0f * normalData.xyz - 1.0f;
-
-	// Get specular power
-	float specularPower = normalData.a * 255;
-
-	// Get specular intensity from gColorMap
-	float specularIntensity = gColorMap.Sample( gColorSampler, texCoord ).a;
-
 	// Surface-to-light vector
-	float3 lightVector = gLightPositionVS - posVS;
+	float3 lightVector = gLightPositionVS - gbuffer.PosVS;
 
 	// Compute attenuation based on distance - linear attenuation
-	float attenuation = saturate(1.0f - length(lightVector)/gLightRadius);
+	float distToLight = length(lightVector);
+	float attenuation = saturate(1.0f - distToLight / gLightRadius);
 
 	// Normalize light vector
-	lightVector = normalize(lightVector);
+	lightVector /= distToLight;
 
 	// Compute diffuse light
-	float NdL = max(0, dot(normal, lightVector));
+	float NdL = max(0, dot(gbuffer.Normal, lightVector));
 	float3 diffuseLight = NdL * gLightColor.rgb;
 
 	// Reflection vector
-	float3 reflectionVector = normalize(reflect(-lightVector, normal));
+	float3 reflectionVector = normalize(reflect(-lightVector, gbuffer.Normal));
 
 	// Camera-to-surface vector (in VS camera position is zero)
-	float3 directionToCamera = normalize(-posVS.xyz);
+	float3 directionToCamera = normalize(-gbuffer.PosVS);
 
 	// Compute specular light
-	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
-		directionToCamera)), specularPower);
+	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float specularLight = gbuffer.SpecularIntensity * pow(x, gbuffer.SpecularPower);
 	
 	// Take attenuation and light intensity into account
-	return attenuation * gLightIntensity * float4(diffuseLight.rgb, specularLight);
+	return attenuation * gLightIntensity * (diffuseLight + specularLight);
+}
+
+float4 PS( VS_OUT input ) : SV_TARGET
+{
+	GBuffer gbuffer;
+
+	float depth = gDepthMap.Load( uint3( input.PosH.xy, 0 ) ).r;
+	float4 diffuse_specIntensity = gColorMap.Load( uint3( input.PosH.xy, 0 ) );
+	float4 normal_specPower = gNormalMap.Load( uint3( input.PosH.xy, 0 ) );
+
+	// Reconstruct view space position
+	// Clamp view ray to the plane at Z = 1
+	float3 viewRay = float3(input.PosV.xy / input.PosV.z, 1.0f);
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
+	float3 posVS = viewRay * linearDepth;
+
+	gbuffer.PosVS = posVS;
+	gbuffer.Diffuse = diffuse_specIntensity.rgb;
+	gbuffer.Normal = normalize(2.0f * normal_specPower.xyz - 1.0f); // Transform back into [-1,1] range
+	gbuffer.SpecularIntensity = diffuse_specIntensity.a;
+	gbuffer.SpecularPower = normal_specPower.a * 255;
+
+	// -------------------------------------
+
+	return float4( gbuffer.Diffuse * EvaluatePointLight( gbuffer ), 1 );
 }
 
 technique11 Technique0

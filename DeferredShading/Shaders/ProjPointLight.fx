@@ -3,9 +3,8 @@ float4x4 gWVP;
 float4x4 gWorldView;
 float3 gLightPositionVS;
 float gLightRadius;
-float gLightIntensity = 1.0f;
-float gProjA;
-float gProjB;
+float gLightIntensity;
+float4x4 gProj;
 
 Texture2D gColorMap;
 Texture2D gNormalMap;
@@ -61,7 +60,7 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	// Sample the depth and convert to linear view space Z (assume it gets
 	// samples as a floating point value in the range [0,1])
 	float depth = gDepthMap.Sample( gSamPoint, texCoord ).r;
-	float linearDepth = gProjB / (depth - gProjA);
+	float linearDepth = gProj[3][2] / (depth - gProj[2][2]);
 	float3 posVS = viewRay * linearDepth;
 
 	// Get normal data from gNormalMap
@@ -73,7 +72,8 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float specularPower = normalData.a * 255;
 
 	// Get specular intensity from gColorMap
-	float specularIntensity = gColorMap.Sample( gSamPoint, texCoord ).a;
+	float4 color = gColorMap.Sample( gSamPoint, texCoord );
+	float specularIntensity = color.a;
 
 	// Surface-to-light vector
 	float3 lightVector = gLightPositionVS - posVS;
@@ -107,11 +107,13 @@ float4 PS( VS_OUT input ) : SV_TARGET
 	float3 directionToCamera = normalize(-posVS.xyz);
 
 	// Compute specular light
-	float specularLight = specularIntensity * pow(saturate(dot(reflectionVector,
-		directionToCamera)), specularPower);
+	float x = saturate(dot(reflectionVector, directionToCamera)) + 1e-6; // Add small epsilon because some graphics processors might return NaN for pow(0,0)
+	float y = specularPower;
+	float specularLight = specularIntensity * pow(x, y);
 	
 	// Take attenuation and light intensity into account
-	return attenuation * gLightIntensity * float4(diffuseLight.rgb, specularLight);
+	float ambientLight = 0.0f;
+	return float4( attenuation * gLightIntensity * color.rgb * (diffuseLight + ambientLight) + attenuation * gLightIntensity * specularLight, 1 );
 }
 
 technique11 Technique0
