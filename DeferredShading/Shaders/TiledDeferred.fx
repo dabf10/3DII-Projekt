@@ -32,7 +32,7 @@ struct GBuffer
 struct PointLight
 {
 	float3 PositionVS;
-	float Radius;
+	float Range;
 	float3 Color;
 	float Intensity;
 };
@@ -77,6 +77,7 @@ groupshared uint visibleCapsuleLightIndices[1024];
 
 float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 {
+	// Light data is in world space; transform it to view space.
 	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
 
 	// Surface-to-light vector
@@ -84,7 +85,7 @@ float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 
 	// Compute attenuation based on distance - linear attenuation
 	float distToLight = length(lightVector);
-	float attenuation = saturate( 1.0f - distToLight / light.Radius);
+	float attenuation = saturate( 1.0f - distToLight / light.Range);
 
 	// Normalize light vector
 	lightVector /= distToLight;
@@ -110,6 +111,7 @@ float3 EvaluatePointLightDiffuse( PointLight light, GBuffer gbuffer )
 
 float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 {
+	// Light data is in world space; transform it to view space.
 	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
 	light.DirectionVS = mul( float4( light.DirectionVS, 0.0f ), gView ).xyz;
 
@@ -147,6 +149,7 @@ float3 EvaluateSpotLightDiffuse( SpotLight light, GBuffer gbuffer )
 
 float3 EvaluateCapsuleLightDiffuse( CapsuleLight light, GBuffer gbuffer )
 {
+	// Light data is in world space; transform it to view space.
 	light.PositionVS = mul( float4( light.PositionVS, 1.0f ), gView ).xyz;
 	light.DirectionVS = mul( float4( light.DirectionVS, 0.0f ), gView ).xyz;
 
@@ -194,9 +197,9 @@ bool IntersectPointLightTile( PointLight light, float4 frustumPlanes[6] )
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
-		//float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		// Light data is in world space; transform it to view space.
 		float dist = dot( frustumPlanes[i], mul( float4( light.PositionVS, 1.0f ), gView ) );
-		inFrustum = inFrustum && (-light.Radius <= dist);
+		inFrustum = inFrustum && (-light.Range <= dist);
 	}
 
 	return inFrustum;
@@ -211,7 +214,7 @@ bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 	[unroll]
 	for (uint i = 0; i < 6; ++i)
 	{
-		//float dist = dot( frustumPlanes[i], float4( light.PositionVS, 1.0f ) );
+		// Light data is in world space; transform it to view space.
 		float dist = dot( frustumPlanes[i], mul( float4( light.PositionVS, 1.0f ), gView ) );
 		inFrustum = inFrustum && (-range <= dist);
 	}
@@ -227,8 +230,7 @@ bool IntersectSpotLightTile( SpotLight light, float4 frustumPlanes[6] )
 // the whole capsule does.
 bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
 {
-	//float4 startPoint = float4( light.PositionVS, 1.0f );
-	//float4 endPoint = float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f );
+	// Light data is in world space; transform it to view space.
 	float4 startPoint = mul( float4( light.PositionVS, 1.0f ), gView );
 	float4 endPoint = mul( float4( light.PositionVS + light.DirectionVS * light.Length, 1.0f ), gView );
 	float range = 1 / light.RangeRcp;
@@ -244,28 +246,6 @@ bool IntersectCapsuleLightTile( CapsuleLight light, float4 frustumPlanes[6] )
 
 	return inFrustum;
 }
-
-// TODO: Light calculation could be performed in world space. If not, light data
-// will have to be transformed into view space. That can be done in two places;
-// either we do it on the CPU serially for every light or we transform light data
-// into view space on the fly here in the compute shader. Transforming would have
-// to be done for every light where at least position needs to be transformed.
-// OR... we could simply keep working in world space (transform GBuffer into WS which
-// is reused for several lights anyway). Instead of transforming several lights
-// for every pixel, we just transform pixel data. Now, the tile frustum calculation
-// would need to be altered and depth would likely need to be in WS as well (VS now?).
-// That means that tile frustum calculation must be recalculated (in VS it could
-// be precalculated because in VS it never changes). However, this is not an issue
-// because tile frustum calculation is really fast and I calculate it here anyway.
-// I believe working in WS with tiled deferred gives a big win because if we work
-// in VS, even static lights have to be transformed when the camera moves. In WS,
-// we can just set data once and be happy with it.
-
-// TODO: Right now I transform light data into view space and work there. This is
-// really unnecessary because I do this transform for every intersecting light for
-// every pixel. What I could do instead is work in view space and only transform
-// gbuffer data instead. Since it's reused for the lights I only do one transform
-// per pixel. When I fix that, search for gView and see where it's used to fix.
 
 // One pixel per thread, 16x16 thread groups (= 1 tile).
 #define BLOCK_SIZE 16
@@ -350,18 +330,6 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		frustumPlanes[i] *= rcp( length( frustumPlanes[i].xyz ) );
 	}
 
-	// TODO:
-	// Det jag gör nu är lite av en naiv lösning. Jag låter trådar culla ljus precis som
-	// vanligt. Om det är fler ljus än trådar körs flera iterationer till alla ljus är cullade.
-	// Därefter gör jag samma sak fast för nästa ljustyp. "Problemet", om man kan kalla det så,
-	// ligger i att de första trådarna arbetar med första ljustypen, till alla är cullade, 
-	// varpå trådarna börjar med nästa typ. Under tiden som en ljustyp cullas sitter oanvända
-	// trådar bara och väntar. Det hade varit bra om de som inte används (när det är fler trådar
-	// än ljus som ska cullas) kunde börja culla nästa ljustyp istället. Jag vet dock inte hur
-	// detta ska göras om man ska undvika massa if-satser och bara kunna köra allt seriellt.
-	// Det är ju trots allt andra funktioner som ska köras för intersektionstest. Liknande
-	// gäller nedan där ljusen summeras.
-
 	// Cull lights against computed frustum. We use multiple passes when we have
 	// more light than threads. The indices of the visible lights are appended to
 	// a list. An atomic add keeps track of the how many lights are visible.
@@ -378,29 +346,6 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		// Prevent overrun by clamping to a last "null" light
 		lightIndex = min( lightIndex, gPointLightCount );
 		
-		// TODO: Jag skulle ju kunna göra transformationen till view space här?
-		// Här går varje tråd igenom ett ljus (några fler ifall väldigt många ljus)
-		// så jag kan byta ut position och riktning till view space. Då behöver jag
-		// inte göra det för varje synligt ljus för varje pixel senare. Datan används
-		// ju ändå i intersection så det måste göras vilket fall som helst. En annan
-		// ide är att göra en andra shader vars enda syfte är att utnyttja massiv
-		// parallellism för att transformera alla ljus till view space; dispatcha
-		// 1 grupp med 1024 trådar i x så transformerar varje tråd ljuset till VS.
-		// Eftersom man kanske vill ha max 1024 ljus räcker det ju med en grupp som
-		// klarar av allt. Skulle man ha fler ljus kan man antingen låta shadern loopa
-		// flera pass (liknande här) eller dispatcha fler trådgrupper.
-		// Transformationsshadern körs innan denna, där ljusbuffern är RW så 
-		// resultatet skrivs ut. När denna shadern sedan körs kommer ljusen redan vara
-		// i view space och det är bara att tuta och köra! :) Det borde resultera
-		// i följande:
-		// 1: Vi kan fortsätta arbeta i view space och utnyttja fördelar med det.
-		// 2: Vi behöver inte transformera ljus till view space på CPU, vi gör det
-		//	  snabbt som satan på GPU.
-		// Notera att vi behöver hålla reda på structar så de är synkade med varandra
-		// i transformationsshadern och denna, inga problem. Alltså: transf.shadern
-		// tar world space och returnerar view space data, som sedan skickas till
-		// denna och beräkningar utförs i view space som vanligt. Neat.
-		// Men testa gärna lite performance :)
 		PointLight light = gPointLights[lightIndex];
 		
 		if (IntersectPointLightTile( light, frustumPlanes ))

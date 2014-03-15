@@ -78,7 +78,7 @@ private:
 	struct PointLight
 	{
 		XMFLOAT3 PositionVS;
-		float Radius;
+		float Range;
 		XMFLOAT3 Color;
 		float Intensity;
 	};

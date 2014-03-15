@@ -417,14 +417,14 @@ void App::InitializeLights( )
 	{
 		mPointLights[i].Color = colors[i];
 		mPointLights[i].Intensity = intensity;
-		mPointLights[i].Radius = range;
+		mPointLights[i].Range = range;
 		mPointLights[i].PositionVS = position;
 	}
 	//mPointLights.insert( mPointLights.begin() + 10, 1000, PointLight() );
 	//for (int i = 10; i < 1010; ++i)
 	//{
 	//	mPointLights[i].Intensity = intensity;
-	//	mPointLights[i].Radius = range;
+	//	mPointLights[i].Range = range;
 	//	mPointLights[i].Color = colors[1];
 	//	mPointLights[i].PositionVS.x = (i - 10) % (25 - (-25)) + (-25);
 	//	mPointLights[i].PositionVS.y = (i - 10) % (20 - 0) + 0;
@@ -432,7 +432,7 @@ void App::InitializeLights( )
 	//}
 	PointLight nullPointLight;
 	ZeroMemory( &nullPointLight, sizeof( PointLight ) );
-	nullPointLight.Radius = -D3D11_FLOAT32_MAX; // Negative range to fail intersection test.
+	nullPointLight.Range = -D3D11_FLOAT32_MAX; // Negative range to fail intersection test.
 	mPointLights.push_back( nullPointLight );
 
 	
@@ -482,7 +482,7 @@ void App::InitializeLights( )
 	mDirectionalLight.Intensity = 1.0f;
 
 	mProjPointLight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
-	mProjPointLight.Radius = 20.0f;
+	mProjPointLight.Range = 20.0f;
 	mProjPointLight.Intensity = 5.0f;
 
 	mProjSpotlight.PositionVS = XMFLOAT3( 45.0f, 5.0f, 0.0f ); // World space
@@ -708,16 +708,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	// SSAO
 	//
 
-	// TODO:
-	// TODO: Use AO when rendering lights :) (Right now this would mean that it's
-	// good to do it using pixel shaders, since we are rendering lights normally.
-	// If tile-based deferred shading turns out all right the lights are "rendered"
-	// using compute shaders, which means that AO can be calculated using CS too :)
-	// It doesn't matter if it's PS or CS really, because the only thing that's
-	// happening is switching to compute mode a little earlier, but there's no
-	// switching from PS to CS and back to PS and back to CS or something.)
-	// TODO:
-	// TODO:
 	// Because SSAO changes viewport (normally only renders to a quarter size of backbuffer)
 	// we need to reset the viewport after.
 	D3D11_VIEWPORT fullViewport;
@@ -1362,7 +1352,7 @@ HRESULT App::CreateLightBuffers( ID3D11Device *pd3dDevice )
 		
 		srvDesc.Buffer.NumElements = max(mPointLights.size(), 1);
 		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mPointLightsSRV ) );
-
+		
 		SAFE_RELEASE( buffy );
 	}
 
@@ -1386,7 +1376,7 @@ HRESULT App::CreateLightBuffers( ID3D11Device *pd3dDevice )
 
 		srvDesc.Buffer.NumElements = max(mCapsuleLights.size(), 1);
 		V_RETURN( pd3dDevice->CreateShaderResourceView( buffy, &srvDesc, &mCapsuleLightsSRV ) );
-
+		
 		SAFE_RELEASE( buffy );
 	}
 }
@@ -1607,7 +1597,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 
 	// Every point light except null light
 	for (int i = 0; i < mPointLights.size() - 1; ++i)
-		RenderPointLight( pd3dImmediateContext, mPointLights[i].Color, mPointLights[i].PositionVS, mPointLights[i].Radius, mPointLights[i].Intensity );
+		RenderPointLight( pd3dImmediateContext, mPointLights[i].Color, mPointLights[i].PositionVS, mPointLights[i].Range, mPointLights[i].Intensity );
 	
 	// Unbind the G-Buffer textures
 	mPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1677,7 +1667,7 @@ void App::RenderLights( ID3D11DeviceContext *pd3dImmediateContext, float fTime )
 	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
 	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
-		mProjPointLight.Radius, mProjPointLight.Intensity, fTime );
+		mProjPointLight.Range, mProjPointLight.Intensity, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
@@ -1753,21 +1743,23 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	pd3dImmediateContext->Unmap( resource, 0 );
 	SAFE_RELEASE( resource );
 
+	int pointLightCount = min( mPointLights.size() - 1, 1024 );
+	int spotLightCount = min( mSpotLights.size() - 1, 1024 );
+	int capsuleLightCount = min( mCapsuleLights.size() - 1, 1024 );
+
 	// Set shader constants (GBuffer, lights, matrices and so forth)
 	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
 	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( mGBuffer->NormalSRV() );
 	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
 	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( mSSAO->AOMap() );
 	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( mHDRUAV );
-	
-	int pointLightCount = min( mPointLights.size() - 1, 1024 );
-	int spotLightCount = min( mSpotLights.size() - 1, 1024 );
-	int capsuleLightCount = min( mCapsuleLights.size() - 1, 1024 );
+
 	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( mPointLightsSRV );
-	mTiledDeferredFX->GetVariableByName("gPointLightCount")->AsScalar()->SetInt( pointLightCount );
 	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( mSpotLightsSRV );
-	mTiledDeferredFX->GetVariableByName("gSpotLightCount")->AsScalar()->SetInt( spotLightCount );
 	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( mCapsuleLightsSRV );
+
+	mTiledDeferredFX->GetVariableByName("gPointLightCount")->AsScalar()->SetInt( pointLightCount );
+	mTiledDeferredFX->GetVariableByName("gSpotLightCount")->AsScalar()->SetInt( spotLightCount );
 	mTiledDeferredFX->GetVariableByName("gCapsuleLightCount")->AsScalar()->SetInt( capsuleLightCount );
 	
 	int groupCount[2];
@@ -1778,10 +1770,6 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gInvProj")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &XMMatrixDeterminant( mCamera.Proj() ), mCamera.Proj() ) );
 	mTiledDeferredFX->GetVariableByName("gBackbufferWidth")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Width) );
 	mTiledDeferredFX->GetVariableByName("gBackbufferHeight")->AsScalar()->SetFloat( static_cast<float>(mBackBufferSurfaceDesc->Height) );
-	XMVECTOR det;
-	//mTiledDeferredFX->GetVariableByName("gInvView")->AsMatrix()->SetMatrix( (float*)&XMMatrixInverse( &det, mCamera.Proj() ) );
-	//mTiledDeferredFX->GetVariableByName("gViewProj")->AsMatrix()->SetMatrix( (float*)&mCamera.ViewProj() );
-	//mTiledDeferredFX->GetVariableByName("gCameraPos")->AsVector()->SetFloatVector( (float*)&mCamera.GetPosition() );
 
 	// Apply technique and execute compute shader
 	mTiledDeferredFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
@@ -1793,6 +1781,7 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
+	
 	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gCapsuleLights")->AsShaderResource()->SetResource( 0 );
@@ -1806,6 +1795,7 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	pd3dImmediateContext->OMSetBlendState( mAdditiveBlend, 0, 0xffffffff );
 	
 	// Common for every light
+	XMVECTOR det;
 	XMMATRIX invProj = XMMatrixInverse( &det, mCamera.Proj() );
 
 	//
@@ -1845,7 +1835,7 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mProjPointLightFX->GetVariableByName("gProj")->AsMatrix()->SetMatrix((float*)&mCamera.Proj());
 
 	RenderProjPointLight( pd3dImmediateContext, mProjPointLightColor, mProjPointLight.PositionVS,
-		mProjPointLight.Radius, mProjPointLight.Intensity, fTime );
+		mProjPointLight.Range, mProjPointLight.Intensity, fTime );
 
 	// Unbind the G-Buffer textures
 	mProjPointLightFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
