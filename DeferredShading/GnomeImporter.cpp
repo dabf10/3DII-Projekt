@@ -456,8 +456,6 @@ bool gnomeImporter::SerializeToFile(std::string path)
 		delete[] binary;
 
 	return true;
-
-	return true;
 }
 
 bool gnomeImporter::DeserializeFromFile(std::string binaryPath, size_t fileLength)

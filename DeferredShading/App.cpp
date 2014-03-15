@@ -106,12 +106,18 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 
 	mFlamingoModel = new AnimatedModel();
 	mFlamingoModel->LoadGnome("Flamingo_Final_1.GNOME", pd3dDevice);
+	mFlamingoModel->SetCurrentClip("Take1");
+
 	mGnomeModel = new AnimatedModel();
 	mGnomeModel->LoadGnome("Gnome_Final_1_Red.GNOME", pd3dDevice);
+	mGnomeModel->SetCurrentClip("Take1");
+
 	mLawnMowerModel = new AnimatedModel();
 	mLawnMowerModel->LoadGnome("LawnMover_Final_1_Red.GNOME", pd3dDevice);
-	mFenceModel = new AnimatedModel();
-	mFenceModel->LoadGnome("Fence_Final_2.GNOME", pd3dDevice);
+	mLawnMowerModel->SetCurrentClip("Take1");
+
+//	mFenceModel = new AnimatedModel();
+	//mFenceModel->LoadGnome("Fence_Final_2.GNOME", pd3dDevice);
 
 	mSphereModel = new Model();
 	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice ) )
@@ -189,7 +195,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_DELETE(mFlamingoModel);
 	SAFE_DELETE(mGnomeModel);
 	SAFE_DELETE(mLawnMowerModel);
-	SAFE_DELETE(mFenceModel);
+	//SAFE_DELETE(mFenceModel);
 
 	SAFE_RELEASE( mBthColor );
 	SAFE_RELEASE(mFlamingoColor);
@@ -211,6 +217,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mFullscreenTextureFX );
 
 	SAFE_RELEASE( mFillGBufferFX );
+	SAFE_RELEASE(mAnimationFX);
 
 	SAFE_RELEASE( mDirectionalLightFX );
 	SAFE_RELEASE( mPointLightFX );
@@ -426,6 +433,10 @@ void App::OnFrameMove( double fTime, float fElapsedTime )
 		mCamera.Strafe(cameraSpeed * fElapsedTime);
 
 	mCamera.UpdateViewMatrix();
+
+	mFlamingoModel->Animate(fElapsedTime);
+	mGnomeModel->Animate(fElapsedTime);
+	mLawnMowerModel->Animate(fElapsedTime);
 }
 
 
@@ -599,17 +610,17 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		//
 		// Fence
 		//
-		world = XMLoadFloat4x4(&mFenceWorld);
-		worldView = world * mCamera.View();
-		wvp = world * mCamera.ViewProj();
-		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		//world = XMLoadFloat4x4(&mFenceWorld);
+		//worldView = world * mCamera.View();
+		//wvp = world * mCamera.ViewProj();
+		//worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 		
 		//Set object specific constants
-		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFenceColor);
-		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		mFenceModel->Render( pd3dImmediateContext );
+		//mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		//mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		//mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFenceColor);
+		//mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		//mFenceModel->Render( pd3dImmediateContext );
 
 		//Done with GNOME
 		pd3dImmediateContext->RSSetState(mCullBack);
@@ -882,6 +893,13 @@ bool App::BuildFX(ID3D11Device *device)
 
 	if (!CompileShader( device, "Shaders/GBuffer.fx", &mFillGBufferFX ))
 		return false;
+
+	//
+	// Animation
+	//
+
+//	if(!CompileShader(device, "Shaders/Animation.fx", &mAnimationFX))
+	//	return false;
 
 	//
 	// DirectionalLight

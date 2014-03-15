@@ -34,8 +34,8 @@ void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT
 	//Initialize
 	unsigned int boneCount = m_BoneOffsets.size();
 
-		/*if( transforms.size( ) < numBones )
-		transforms.resize( numBones );*/
+	if( transformations.size() < boneCount)
+		transformations.resize(boneCount);
 
 	std::vector<XMFLOAT4X4> toParentTransformations = std::vector<XMFLOAT4X4>(boneCount);
 	std::vector<XMFLOAT4X4> toRootTransformations = std::vector<XMFLOAT4X4>(boneCount);
@@ -45,7 +45,7 @@ void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT
 
 	//Use them to generate toroot transformations
 	toRootTransformations[0] = toParentTransformations[0];
-	for(unsigned int i = 0; i < boneCount; ++i)
+	for(unsigned int i = 1; i < boneCount; ++i)
 	{
 		XMMATRIX toParent = XMLoadFloat4x4(&toParentTransformations[i]);
 
@@ -94,9 +94,9 @@ void SkinnedData::ParseAnimation(std::string fileName)
 	int boneID = -1;
 
 	char buffer[512] = {0};
-	while( file.good( ) )
+	while(file.good())
 	{
-		file.getline( buffer, sizeof( buffer ) );
+		file.getline(buffer, sizeof(buffer ));
 
 		int   i[2]  = {0};
 		float f[16] = {0};
@@ -171,6 +171,34 @@ void SkinnedData::WriteSerializedAnimation(std::string fileName)
 	char* pos		= binary;				//Pointer to the next position that should be ritten to
 	size_t readCount = 0;					//How many bytes have been read in total
 
+	//Save the number of boneHiearchies.
+	unsigned int boneHierarchyCount = m_BoneHierarchy.size();
+	memcpy_s(pos, bufferSize - readCount, &boneHierarchyCount, uintSize);
+	pos += uintSize;
+	readCount += uintSize;
+
+	//Save the bonehierarchies
+	for(int i = 0; i < boneHierarchyCount; ++i)
+	{
+		memcpy_s(pos, bufferSize - readCount, &m_BoneHierarchy[i], intSize);
+		pos += intSize;
+		readCount += intSize;
+	}
+
+	//Save the number of boneoffsets
+	unsigned int boneOffsetCount = m_BoneOffsets.size();
+	memcpy_s(pos, bufferSize - readCount, &boneOffsetCount, uintSize);
+	pos += uintSize;
+	readCount += uintSize;
+
+	//Save the boneOffsets
+	for(int i = 0; i < boneOffsetCount; ++i)
+	{
+		memcpy_s(pos, bufferSize - readCount, &m_BoneOffsets[i], float4x4Size);
+		pos += float4x4Size;
+		readCount += float4x4Size;
+	}
+
 	//Save the number of elements that are in the map.
 	unsigned int mapElementCount = 0;
 	mapElementCount = m_AnimationClips.size();
@@ -178,7 +206,7 @@ void SkinnedData::WriteSerializedAnimation(std::string fileName)
 	pos += uintSize;
 	readCount += uintSize;
 
-	//Save the actual alements in the map
+	//Save the actual elements in the map
 	for (auto it = m_AnimationClips.begin(); it != m_AnimationClips.end(); ++it)
 	{
 		//Save the length of the string
@@ -203,8 +231,7 @@ void SkinnedData::WriteSerializedAnimation(std::string fileName)
 	ofs.close();
 
 	//Cleanup
-	if(binary)
-		delete[] binary;
+	delete[] binary;
 }
 
 void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
@@ -218,11 +245,37 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 
 	//Copy data
 
+	//bonehierarchy count
+	unsigned int boneHierarchyCount = 0;
+	memcpy_s(&boneHierarchyCount, uintSize, pos, uintSize);
+	pos += uintSize;
+	bytesread = uintSize;
+
+	//Bonehierarchies
+	int* tempBoneHierarchy = new int[boneHierarchyCount];
+	memcpy_s(tempBoneHierarchy, boneHierarchyCount * intSize, pos, boneHierarchyCount * intSize);
+	pos += boneHierarchyCount * intSize;
+	bytesread += boneHierarchyCount * intSize;
+	m_BoneHierarchy.insert(m_BoneHierarchy.end(), &tempBoneHierarchy[0], &tempBoneHierarchy[boneHierarchyCount]);
+
+	//Boneoffset count
+	unsigned int boneOffsetCount = 0;
+	memcpy_s(&boneOffsetCount, uintSize, pos, uintSize);
+	pos += uintSize;
+	bytesread += uintSize;
+
+	//BoneOffsets
+	XMFLOAT4X4* tempBoneOffsets = new XMFLOAT4X4[boneOffsetCount];
+	memcpy_s(tempBoneOffsets, float4x4Size * boneOffsetCount, pos, float4x4Size * boneOffsetCount);
+	pos += float4x4Size * boneOffsetCount;
+	bytesread += float4x4Size * boneOffsetCount;
+	m_BoneOffsets.insert(m_BoneOffsets.end(), &tempBoneOffsets[0], &tempBoneOffsets[boneOffsetCount]);
+
 	//mapSize
 	unsigned int mapSize = 0;
 	memcpy_s(&mapSize, uintSize, pos, uintSize);
 	pos += uintSize;
-	bytesread = uintSize;	// = on purpose to reset.
+	bytesread += uintSize;	// = on purpose to reset.
 
 	std::string* clipNames = new std::string[mapSize];
 	AnimationClip* clips = new AnimationClip[mapSize];
@@ -277,10 +330,14 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 			}
 			//Put the keyframes in the bone animations
 			tempBoneAnimations[j].KeyFrames.insert(tempBoneAnimations[j].KeyFrames.end(), &tempKeyFrames[0], &tempKeyFrames[keyFrameCount]); //Tar ej med sista elementet så [keyFrameCount} är OK!
+			delete[] tempKeyFrames;
 		}
 		//Put the bone animations in the animationclip
 		clip.BoneAnimations.insert(clip.BoneAnimations.end(), &tempBoneAnimations[0], &tempBoneAnimations[boneAnimationCount]);
 		clips[i] = clip;
+
+		delete[] readString;
+		delete[] tempBoneAnimations;
 	}
 
 	//Put the read Animationsclips and their respective names in the map
@@ -290,11 +347,20 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 	}
 
 	//Cleanup
-	//if(clipNames)
-	//	delete[] clipNames;
-	//if(clips)
-	//	delete[] clips;
+		delete[] clipNames;
+		delete[] clips;
+		delete[] tempBoneOffsets;
+		delete[] tempBoneHierarchy;
+		delete[] buffer;
 }
+
+float SkinnedData::GetClipLength(std::string& clipName)
+{
+	auto clip = m_AnimationClips.find(clipName);
+	return clip->second.ClipLength;
+}
+
+
 
 #pragma endregion
 

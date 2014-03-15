@@ -2,11 +2,14 @@
 
 AnimatedModel::AnimatedModel()
 {
+	mAnimationTime = 0;
+	mAnimation = new SkinnedData();
 }
 
 AnimatedModel::~AnimatedModel()
 {
 	SAFE_RELEASE(mVertexBuffer);
+	delete mAnimation; mAnimation = nullptr;
 }
 
 bool AnimatedModel::LoadGnome(const char* filename, ID3D11Device* device)
@@ -44,6 +47,9 @@ bool AnimatedModel::LoadGnome(const char* filename, ID3D11Device* device)
 		return false;
 	}
 	delete[] convertedVertices;
+
+	mAnimation->LoadAnimation(filename);
+
 	return true;
 }
 
@@ -54,6 +60,24 @@ void AnimatedModel::Render(ID3D11DeviceContext* context)
 
 	context->IASetVertexBuffers(0, 1, &mVertexBuffer, &stride, &offset);
 	context->Draw(mVertexCount, 0);
+}
+
+void AnimatedModel::Animate(float dt)
+{
+	//Reset matrices
+	mAnimationMatrices = std::vector<XMFLOAT4X4>();
+
+	mAnimationTime += dt;
+	float clipLength = mAnimation->GetClipLength(mCurrentClipName);
+	if(mAnimationTime > clipLength)
+		mAnimationTime -= clipLength; //loop
+
+	mAnimation->Animate(mCurrentClipName, mAnimationTime, mAnimationMatrices);
+}
+
+void AnimatedModel::SetCurrentClip(std::string clipName)
+{
+	mCurrentClipName = clipName;
 }
 
 AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices)
@@ -76,3 +100,4 @@ AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter:
 
 	return convertedVertices;
 }
+

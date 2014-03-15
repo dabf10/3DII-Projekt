@@ -5,7 +5,7 @@
 #include "DXUT.h"
 #include <xnamath.h>
 #include "GnomeImporter.h"
-
+#include "SkinnedData.h"
 
 class AnimatedModel
 {
@@ -22,11 +22,18 @@ public:
 
 	bool LoadGnome(const char* fileName, ID3D11Device* device);
 	void Render(ID3D11DeviceContext* context);
+	void Animate(float dt);
+	void SetCurrentClip(std::string clipName);
 
 private:
 	Vertex* ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices);
 
 	ID3D11Buffer* mVertexBuffer;
+	SkinnedData* mAnimation;
+	std::vector<XMFLOAT4X4> mAnimationMatrices;
+
 	unsigned int mVertexCount;
+	float mAnimationTime;
+	std::string mCurrentClipName;
 };
 #endif

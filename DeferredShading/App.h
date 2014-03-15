@@ -161,6 +161,7 @@ private:
 	ID3DX11Effect *mFullscreenTextureFX;
 
 	ID3DX11Effect *mFillGBufferFX;
+	ID3DX11Effect* mAnimationFX;
 
 	ID3DX11Effect *mDirectionalLightFX;
 	ID3DX11EffectTechnique *mDirectionalLightTech;

@@ -23,6 +23,8 @@ public:
 	void ParseAnimation(std::string fileName);
 	void WriteSerializedAnimation(std::string fileName);
 	void ReadBinaryAnimation(std::string fileName, size_t length);
+	float GetClipLength(std::string &clipName );
+
 
 private:
 	std::vector<int> m_BoneHierarchy;
@@ -35,6 +37,8 @@ private:
 	static const size_t bufferSize	= 8388608;
 	static const size_t uintSize	= sizeof(unsigned int);
 	static const size_t floatSize	= sizeof(float);
+	static const size_t intSize		= sizeof(int);
+	static const size_t	float4x4Size = sizeof(XMFLOAT4X4);
 };
 
 struct SkinnedData::AnimationClip

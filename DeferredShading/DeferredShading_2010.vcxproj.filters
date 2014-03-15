@@ -142,6 +142,9 @@
     <None Include="Shaders\ProjSpotlight.fx">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="Shaders\Animation.fx">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp">
