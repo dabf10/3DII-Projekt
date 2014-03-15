@@ -705,18 +705,6 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 	}
 
 	//
-	// Render lights
-	//
-
-	if (!deferred)
-		RenderLights( pd3dImmediateContext, fTime );
-	else
-		RenderLightsTiled( pd3dImmediateContext, fTime );
-
-	// Tone map the HDR texture so that we can display it nicely.
-	ToneMap( pd3dImmediateContext, fElapsedTime );
-
-	//
 	// SSAO
 	//
 
@@ -740,6 +728,18 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mMainDepthSRV, mGBuffer->NormalSRV(), mCamera.Proj(), pd3dImmediateContext );
 
 	pd3dImmediateContext->RSSetViewports(1, &fullViewport);
+
+	//
+	// Render lights
+	//
+
+	if (!deferred)
+		RenderLights( pd3dImmediateContext, fTime );
+	else
+		RenderLightsTiled( pd3dImmediateContext, fTime );
+
+	// Tone map the HDR texture so that we can display it nicely.
+	ToneMap( pd3dImmediateContext, fElapsedTime );
 
 
 	//
@@ -1757,6 +1757,7 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( mGBuffer->ColorSRV() );
 	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( mGBuffer->NormalSRV() );
 	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( mMainDepthSRV );
+	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( mSSAO->AOMap() );
 	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( mHDRUAV );
 	
 	int pointLightCount = min( mPointLights.size() - 1, 1024 );
@@ -1790,6 +1791,7 @@ void App::RenderLightsTiled( ID3D11DeviceContext *pd3dImmediateContext, float fT
 	mTiledDeferredFX->GetVariableByName("gColorMap")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gNormalMap")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gDepthMap")->AsShaderResource()->SetResource( 0 );
+	mTiledDeferredFX->GetVariableByName("gAOMap")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gOutputTexture")->AsUnorderedAccessView()->SetUnorderedAccessView( 0 );
 	mTiledDeferredFX->GetVariableByName("gPointLights")->AsShaderResource()->SetResource( 0 );
 	mTiledDeferredFX->GetVariableByName("gSpotLights")->AsShaderResource()->SetResource( 0 );

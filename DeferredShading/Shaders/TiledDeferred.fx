@@ -2,6 +2,7 @@
 Texture2D<float4> gColorMap : register( t0 );
 Texture2D<float4> gNormalMap : register( t1 );
 Texture2D<float4> gDepthMap : register( t2 );
+Texture2D<float> gAOMap : register( t3 );
 
 // Output
 RWTexture2D<float4> gOutputTexture : register( u0 ); // Full ihopsatt och ljussatt HDR textur
@@ -11,6 +12,13 @@ float4x4 gProj;
 float4x4 gInvProj;
 float gBackbufferWidth;
 float gBackbufferHeight;
+
+SamplerState gSamLinear
+{
+	Filter = MIN_MAG_MIP_LINEAR;
+	AddressU = CLAMP;
+	AddressV = CLAMP;
+};
 
 struct GBuffer
 {
@@ -370,6 +378,29 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		// Prevent overrun by clamping to a last "null" light
 		lightIndex = min( lightIndex, gPointLightCount );
 		
+		// TODO: Jag skulle ju kunna göra transformationen till view space här?
+		// Här går varje tråd igenom ett ljus (några fler ifall väldigt många ljus)
+		// så jag kan byta ut position och riktning till view space. Då behöver jag
+		// inte göra det för varje synligt ljus för varje pixel senare. Datan används
+		// ju ändå i intersection så det måste göras vilket fall som helst. En annan
+		// ide är att göra en andra shader vars enda syfte är att utnyttja massiv
+		// parallellism för att transformera alla ljus till view space; dispatcha
+		// 1 grupp med 1024 trådar i x så transformerar varje tråd ljuset till VS.
+		// Eftersom man kanske vill ha max 1024 ljus räcker det ju med en grupp som
+		// klarar av allt. Skulle man ha fler ljus kan man antingen låta shadern loopa
+		// flera pass (liknande här) eller dispatcha fler trådgrupper.
+		// Transformationsshadern körs innan denna, där ljusbuffern är RW så 
+		// resultatet skrivs ut. När denna shadern sedan körs kommer ljusen redan vara
+		// i view space och det är bara att tuta och köra! :) Det borde resultera
+		// i följande:
+		// 1: Vi kan fortsätta arbeta i view space och utnyttja fördelar med det.
+		// 2: Vi behöver inte transformera ljus till view space på CPU, vi gör det
+		//	  snabbt som satan på GPU.
+		// Notera att vi behöver hålla reda på structar så de är synkade med varandra
+		// i transformationsshadern och denna, inga problem. Alltså: transf.shadern
+		// tar world space och returnerar view space data, som sedan skickas till
+		// denna och beräkningar utförs i view space som vanligt. Neat.
+		// Men testa gärna lite performance :)
 		PointLight light = gPointLights[lightIndex];
 		
 		if (IntersectPointLightTile( light, frustumPlanes ))
@@ -423,7 +454,10 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 	// Step 4 - Switching back to processing pixels. Accumulate lighting from the
 	// visible lights calculated earlier and combine with color data.
 	
-	float3 color = 1.3f * gbuffer.Diffuse; // Ambient
+	float2 uv = dispatchThreadID.xy / float2( gBackbufferWidth, gBackbufferHeight );
+	float ao = gAOMap.SampleLevel( gSamLinear, uv, 0 ).r;
+
+	float3 color = ao * 1.3f * gbuffer.Diffuse; // Ambient
 	uint lightIt;
 
 	// Point lights
@@ -432,6 +466,10 @@ void CS( uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID,
 		uint lightIndex = visiblePointLightIndices[lightIt];
 		PointLight light = gPointLights[lightIndex];
 
+		// TODO: När jag separerar diffuse och specular kan sätta AO specifikt på
+		// bara diffuse. Jag använder bara ao på ambient just nu eftersom jag
+		// vill kunna se skillnad när jag byter till geometry deferred (som inte
+		// använder ao).
 		color += gbuffer.Diffuse * EvaluatePointLightDiffuse( light, gbuffer );
 		//color += diffuseAlbedo * evaluateLightDiffuse( light, gbuffer );
 		//color += specularAlbedo * evaluateLightSpecular( light, gbuffer );
