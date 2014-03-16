@@ -98,7 +98,6 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	
 	if (FAILED( D3DX11CreateShaderResourceViewFromFileA( pd3dDevice, "bthcolor.dds", 0, 0, &mBthColor, 0 ) ) )
 		return E_FAIL;
-
 	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Flamingo_Final_1_Default_diffuse.dds", 0, 0, &mFlamingoColor, 0)))
 		return E_FAIL;
 	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Gnome_Final_1_Gnome_Diffuse_Red.dds", 0, 0, &mGnomeColor, 0)))
@@ -136,8 +135,8 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mLawnMowerModel->LoadGnome("LawnMover_Final_1_Red.GNOME", pd3dDevice);
 	mLawnMowerModel->SetCurrentClip("Take1");
 
-//	mFenceModel = new AnimatedModel();
-	//mFenceModel->LoadGnome("Fence_Final_2.GNOME", pd3dDevice);
+	mFenceModel = new Model();
+	mFenceModel->LoadGnome("Fence_Final_2.GNOME", pd3dDevice);
 
 	mSphereModel = new Model();
 	if (!mSphereModel->LoadOBJ( "sphere.obj", true, pd3dDevice ) )
@@ -217,7 +216,7 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_DELETE(mFlamingoModel);
 	SAFE_DELETE(mGnomeModel);
 	SAFE_DELETE(mLawnMowerModel);
-	//SAFE_DELETE(mFenceModel);
+	SAFE_DELETE(mFenceModel);
 
 	SAFE_RELEASE( mBthColor );
 	SAFE_RELEASE(mFlamingoColor);
@@ -235,11 +234,11 @@ void App::OnD3D11DestroyDevice( )
 	SAFE_RELEASE( mProjSpotlightColor );
 	
 	SAFE_RELEASE( mInputLayout );
+	SAFE_RELEASE(mAnimationInputLayout);
 
 	SAFE_RELEASE( mFullscreenTextureFX );
 
 	SAFE_RELEASE( mFillGBufferFX );
-	SAFE_RELEASE(mAnimationFX);
 
 	SAFE_RELEASE( mAmbientLightFX );
 	SAFE_RELEASE( mDirectionalLightFX );
@@ -756,8 +755,10 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mSphereModel->Render( pd3dImmediateContext );
 
-		//Render GNOME FORMAT
+		//Render animted objects
 		pd3dImmediateContext->RSSetState(mCullFront);
+		pd3dImmediateContext->IASetInputLayout(mAnimationInputLayout);
+		
 
 		//
 		// Flamingo
@@ -771,7 +772,8 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFlamingoColor);
-		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFillGBufferFX->GetVariableByName("gBoneTransforms")->SetRawValue(mFlamingoModel->GetAnimiationMatrices().data(), sizeof(XMFLOAT4X4), mFlamingoModel->GetAnimiationMatrices().size());
+		mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName("Animation")->Apply( 0, pd3dImmediateContext );
 		mFlamingoModel->Render( pd3dImmediateContext );
 
 		//
@@ -804,23 +806,27 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
 		mLawnMowerModel->Render( pd3dImmediateContext );
 
+		//End of animated rendering
+		pd3dImmediateContext->RSSetState(mCullBack);
+		pd3dImmediateContext->IASetInputLayout(mAnimationInputLayout);
+		
+
 		//
 		// Fence
 		//
-		//world = XMLoadFloat4x4(&mFenceWorld);
-		//worldView = world * mCamera.View();
-		//wvp = world * mCamera.ViewProj();
-		//worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		world = XMLoadFloat4x4(&mFenceWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 		
 		//Set object specific constants
-		//mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-		//mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		//mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFenceColor);
-		//mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
-		//mFenceModel->Render( pd3dImmediateContext );
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFenceColor);
+		mFillGBufferFX->GetTechniqueByIndex( 0 )->GetPassByIndex( 0 )->Apply( 0, pd3dImmediateContext );
+		mFenceModel->Render( pd3dImmediateContext );
 
 		//Done with GNOME
-		pd3dImmediateContext->RSSetState(mCullBack);
 
 		//
 		// Cone model
@@ -1148,13 +1154,6 @@ bool App::BuildFX(ID3D11Device *device)
 		return false;
 
 	//
-	// Animation
-	//
-
-//	if(!CompileShader(device, "Shaders/Animation.fx", &mAnimationFX))
-	//	return false;
-
-	//
 	// AmbientLight
 	//
 
@@ -1286,6 +1285,21 @@ bool App::CompileShader( ID3D11Device *device, const char *filename, ID3DX11Effe
 
 bool App::BuildVertexLayout(ID3D11Device *device)
 {
+	D3D11_INPUT_ELEMENT_DESC animatedVertexDescription[] =
+	{
+		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"WEIGHTS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"BONES", 0, DXGI_FORMAT_R32G32B32A32_UINT,0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0} //Correct fomat?
+	};
+
+	D3DX11_PASS_DESC animationPassDescription;
+	mFillGBufferFX->GetTechniqueByIndex(1)->GetPassByIndex(0)->GetDesc(&animationPassDescription); //hämta technique såhär ok?
+	if(FAILED(device->CreateInputLayout(animatedVertexDescription, 5, animationPassDescription.pIAInputSignature,
+		animationPassDescription.IAInputSignatureSize, &mAnimationInputLayout)))
+		return false;
+
 	// Create the vertex input layout.
 	D3D11_INPUT_ELEMENT_DESC vertexDesc[] =
 	{

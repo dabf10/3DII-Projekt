@@ -11,9 +11,11 @@ class AnimatedModel
 {
 	struct Vertex
 	{
-		XMFLOAT3 Position;
-		XMFLOAT2 TexCoord;
-		XMFLOAT3 Normal;
+		XMFLOAT3		Position;
+		XMFLOAT2		TexCoord;
+		XMFLOAT3		Normal;
+		XMFLOAT4		Weights;
+		unsigned int	Bones[4];
 	};
 
 public:
@@ -24,6 +26,7 @@ public:
 	void Render(ID3D11DeviceContext* context);
 	void Animate(float dt);
 	void SetCurrentClip(std::string clipName);
+	std::vector<XMFLOAT4X4> GetAnimiationMatrices();
 
 private:
 	Vertex* ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices);

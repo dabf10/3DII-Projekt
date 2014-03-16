@@ -59,6 +59,7 @@ void AnimatedModel::Render(ID3D11DeviceContext* context)
 	unsigned int offset = 0;
 
 	context->IASetVertexBuffers(0, 1, &mVertexBuffer, &stride, &offset);
+
 	context->Draw(mVertexCount, 0);
 }
 
@@ -80,6 +81,11 @@ void AnimatedModel::SetCurrentClip(std::string clipName)
 	mCurrentClipName = clipName;
 }
 
+std::vector<XMFLOAT4X4> AnimatedModel::GetAnimiationMatrices()
+{
+	return mAnimationMatrices;
+}
+
 AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices)
 {
 	Vertex* convertedVertices = new Vertex[importedVertices.size()];
@@ -96,6 +102,15 @@ AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter:
 
 		convertedVertices[i].TexCoord.x = importedVertices[i].uv[0];
 		convertedVertices[i].TexCoord.y = importedVertices[i].uv[1];
+
+		convertedVertices[i].Weights.x = importedVertices[i].skinWeight[0];
+		convertedVertices[i].Weights.y = importedVertices[i].skinWeight[1];
+		convertedVertices[i].Weights.z = importedVertices[i].skinWeight[2];
+
+		convertedVertices[i].Bones[0] = importedVertices[i].jointIndex[0];
+		convertedVertices[i].Bones[1] = importedVertices[i].jointIndex[1];
+		convertedVertices[i].Bones[2] = importedVertices[i].jointIndex[2];
+		convertedVertices[i].Bones[3] = importedVertices[i].jointIndex[3];
 	}
 
 	return convertedVertices;

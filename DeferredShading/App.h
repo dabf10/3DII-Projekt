@@ -173,20 +173,19 @@ private:
 	XMFLOAT4X4 mmLawnMowerWorld;
 	ID3D11ShaderResourceView* mLawnMowerColor;
 
-	AnimatedModel* mFenceModel;
+	Model* mFenceModel;
 	XMFLOAT4X4 mFenceWorld;
 	ID3D11ShaderResourceView* mFenceColor;
 
 	ID3D11ShaderResourceView *mProjPointLightColor;
 	ID3D11ShaderResourceView *mProjSpotlightColor;
-	
-	SkinnedData *mAnimatedModel;
 
 	Camera mCamera;
 
 	POINT mLastMousePos;
 
 	ID3D11InputLayout *mInputLayout;
+	ID3D11InputLayout* mAnimationInputLayout;
 
 	CDXUTDialog mHUD; // Manages the 3D UI
 	CD3DSettingsDlg mD3DSettingsDlg; // Device settings dialog
@@ -218,7 +217,6 @@ private:
 	ID3DX11Effect *mFullscreenTextureFX;
 
 	ID3DX11Effect *mFillGBufferFX;
-	ID3DX11Effect* mAnimationFX;
 
 	ID3DX11Effect *mAmbientLightFX;
 	ID3DX11Effect *mDirectionalLightFX;
