@@ -163,6 +163,7 @@ private:
 
 	AnimatedModel* mFlamingoModel;
 	XMFLOAT4X4 mFlamingoWorld;
+	XMFLOAT4X4 mBrokenFlamingoWorld;
 	ID3D11ShaderResourceView* mFlamingoColor;
 
 	AnimatedModel* mGnomeModel;

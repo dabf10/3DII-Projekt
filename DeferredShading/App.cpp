@@ -100,7 +100,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 		return E_FAIL;
 	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Flamingo_Final_1_Default_diffuse.dds", 0, 0, &mFlamingoColor, 0)))
 		return E_FAIL;
-	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Flamingo_Final_1_Default_diffuse.dds", 0, 0, &mGnomeColor, 0)))
+	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "Gnome_Final_1_Gnome_Diffuse_Red.dds", 0, 0, &mGnomeColor, 0)))
 		return E_FAIL;
 	if(FAILED(D3DX11CreateShaderResourceViewFromFileA(pd3dDevice, "LawnMover_Final_1_Red.dds", 0, 0, &mLawnMowerColor, 0)))
 		return E_FAIL;
@@ -128,7 +128,7 @@ HRESULT App::OnD3D11CreateDevice( ID3D11Device* pd3dDevice, const DXGI_SURFACE_D
 	mFlamingoModel->SetCurrentClip("Take1");
 
 	mGnomeModel = new AnimatedModel();
-	mGnomeModel->LoadGnome("Flamingo_Final_1.GNOME", pd3dDevice);
+	mGnomeModel->LoadGnome("Gnome_Final_1_Red.GNOME", pd3dDevice);
 	mGnomeModel->SetCurrentClip("Take1");
 
 	mLawnMowerModel = new AnimatedModel();
@@ -415,19 +415,23 @@ bool App::Init( )
 	//Flamingo world
 	uniformScaleFactor = 0.009f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
-	//rotationX = XMMatrixRotationX(XMConvertToRadians(90));
-	//rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
-	rotation = XMMatrixIdentity();//rotationX * rotationY;
+	rotation = XMMatrixRotationY(XMConvertToRadians(-90));
 	translation = XMMatrixTranslation(-50.0f, 0.5f, 0.0f);
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mFlamingoWorld, world);
 
+	//Broken FlamingoWorld
+	uniformScaleFactor = 0.009f;
+	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
+	rotation = XMMatrixIdentity();
+	translation = XMMatrixTranslation(-60.0f, 0.5f, 10.0f);
+	world = scale * rotation * translation;
+	XMStoreFloat4x4(&mBrokenFlamingoWorld, world);
+
 	//Gnome World
 	uniformScaleFactor = 0.009f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
-	//rotationX = XMMatrixRotationX(XMConvertToRadians(90));
-	//rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
-	rotation = XMMatrixIdentity();
+	rotation = XMMatrixRotationY(XMConvertToRadians(-90));
 	translation = XMMatrixTranslation(-50.0f, 0.5f, 10.0f);
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mGnomeWorld, world);
@@ -435,9 +439,7 @@ bool App::Init( )
 	//Lawn Mower World
 	uniformScaleFactor = 0.009f;
 	scale = XMMatrixScaling(uniformScaleFactor, uniformScaleFactor, uniformScaleFactor);
-	//rotationX = XMMatrixRotationX(XMConvertToRadians(90));
-	//rotationY = XMMatrixRotationY(XMConvertToRadians(-90));
-	rotation = XMMatrixIdentity();
+	rotation = XMMatrixRotationY(XMConvertToRadians(-90));
 	translation = XMMatrixTranslation(-50.0f, 0.5f, -10.0f);
 	world = scale * rotation * translation;
 	XMStoreFloat4x4(&mmLawnMowerWorld, world);
@@ -484,16 +486,16 @@ void App::InitializeLights( )
 		mPointLights[i].Range = range;
 		mPointLights[i].PositionVS = position;
 	}
-	//mPointLights.insert( mPointLights.begin() + 10, 1000, PointLight() );
-	//for (int i = 10; i < 1010; ++i)
-	//{
-	//	mPointLights[i].Intensity = intensity;
-	//	mPointLights[i].Range = range;
-	//	mPointLights[i].Color = colors[1];
-	//	mPointLights[i].PositionVS.x = (i - 10) % (25 - (-25)) + (-25);
-	//	mPointLights[i].PositionVS.y = (i - 10) % (20 - 0) + 0;
-	//	mPointLights[i].PositionVS.z = (i - 10) % (75 - 30) + 30;
-	//}
+	mPointLights.insert( mPointLights.begin() + 10, 1000, PointLight() );
+	for (int i = 10; i < 1010; ++i)
+	{
+		mPointLights[i].Intensity = intensity;
+		mPointLights[i].Range = range;
+		mPointLights[i].Color = colors[1];
+		mPointLights[i].PositionVS.x = (i - 10) % (25 - (-25)) + (-25);
+		mPointLights[i].PositionVS.y = (i - 10) % (20 - 0) + 0;
+		mPointLights[i].PositionVS.z = (i - 10) % (75 - 30) + 30;
+	}
 	PointLight nullPointLight;
 	ZeroMemory( &nullPointLight, sizeof( PointLight ) );
 	nullPointLight.Range = -D3D11_FLOAT32_MAX; // Negative range to fail intersection test.
@@ -577,6 +579,33 @@ void App::OnFrameMove( double fTime, float fElapsedTime )
 
 	if (GetAsyncKeyState('D') & 0x8000)
 		mCamera.Strafe(cameraSpeed * fElapsedTime);
+
+	if (GetAsyncKeyState('U') & 0x8000)
+	{
+		if(mLawnMowerModel->GetLoop())
+		{
+			mLawnMowerModel->SetLoop(false);
+			mLawnMowerModel->SetCurrentClip("Take2");
+		}
+		else
+		{
+			mLawnMowerModel->SetLoop(true);
+			mLawnMowerModel->SetCurrentClip("Take1");
+		}
+	}
+	if (GetAsyncKeyState('I') & 0x8000)
+	{
+		if(mGnomeModel->GetLoop())
+		{
+			mGnomeModel->SetLoop(false);
+			mGnomeModel->SetCurrentClip("Take2");
+		}
+		else
+		{
+			mGnomeModel->SetLoop(true);
+			mGnomeModel->SetCurrentClip("Take1");
+		}
+	}
 
 	mCamera.UpdateViewMatrix();
 	mFlamingoModel->Animate(fElapsedTime);
@@ -756,18 +785,17 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mSphereModel->Render( pd3dImmediateContext );
 
 		//Render animted objects
-		//pd3dImmediateContext->RSSetState(mCullFront);
 		pd3dImmediateContext->IASetInputLayout(mAnimationInputLayout);
 		
+		//
+		//Broken Flamingo
+		//
 
-		//
-		// Flamingo
-		//
-		world = XMLoadFloat4x4(&mFlamingoWorld);
+		world = XMLoadFloat4x4(&mBrokenFlamingoWorld);
 		worldView = world * mCamera.View();
 		wvp = world * mCamera.ViewProj();
 		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
-		
+
 		//Set object specific constants
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
@@ -777,7 +805,25 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFlamingoModel->Render( pd3dImmediateContext );
 
 		//
-		// Flamingo2
+		// Flamingo
+		//
+
+		world = XMLoadFloat4x4(&mFlamingoWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mFlamingoColor);
+		mFillGBufferFX->GetVariableByName("gBoneTransforms")->AsMatrix()->SetMatrixArray((float*)mFlamingoModel->GetAnimiationMatrices().data(), 0, mFlamingoModel->GetAnimiationMatrices().size());
+		mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName("Animation")->Apply( 0, pd3dImmediateContext );
+		mFlamingoModel->Render( pd3dImmediateContext );
+
+
+		//
+		// Gnome
 		//
 		world = XMLoadFloat4x4(&mGnomeWorld);
 		worldView = world * mCamera.View();
@@ -788,27 +834,26 @@ void App::OnD3D11FrameRender( ID3D11Device* pd3dDevice, ID3D11DeviceContext* pd3
 		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
 		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
 		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mGnomeColor);
-		HRESULT h = mFillGBufferFX->GetVariableByName("gBoneTransforms")->AsMatrix()->SetMatrixArray((float*)mFlamingoModel->GetAnimiationMatrices().data(), 0, mFlamingoModel->GetAnimiationMatrices().size()); //Hur vet denna hur mycket data som ska sättas?
+		mFillGBufferFX->GetVariableByName("gBoneTransforms")->AsMatrix()->SetMatrixArray((float*)mGnomeModel->GetAnimiationMatrices().data(), 0, mGnomeModel->GetAnimiationMatrices().size());
 		mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName("Animation")->Apply( 0, pd3dImmediateContext );
-		mFlamingoModel->Render( pd3dImmediateContext );
+		mGnomeModel->Render( pd3dImmediateContext );
 
 		//
 		// Lawn Mower
 		//
 
-		//world = XMLoadFloat4x4(&mmLawnMowerWorld);
-		//worldView = world * mCamera.View();
-		//wvp = world * mCamera.ViewProj();
-		//worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
+		world = XMLoadFloat4x4(&mmLawnMowerWorld);
+		worldView = world * mCamera.View();
+		wvp = world * mCamera.ViewProj();
+		worldViewInvTrp = XMMatrixTranspose(XMMatrixInverse(&XMMatrixDeterminant(worldView), worldView));
 	
-
-
-		////Set object specific constants
-		//mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
-		//mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
-		//mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mLawnMowerColor);
-		//mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName( "Animation" )->Apply( 0, pd3dImmediateContext );
-		//mLawnMowerModel->Render( pd3dImmediateContext );
+		//Set object specific constants
+		mFillGBufferFX->GetVariableByName("gWorldViewInvTrp")->AsMatrix()->SetMatrix((float*)&worldViewInvTrp);
+		mFillGBufferFX->GetVariableByName("gWVP")->AsMatrix()->SetMatrix((float*)&wvp);
+		mFillGBufferFX->GetVariableByName("gDiffuseMap")->AsShaderResource()->SetResource(mLawnMowerColor);
+		mFillGBufferFX->GetVariableByName("gBoneTransforms")->AsMatrix()->SetMatrixArray((float*)mLawnMowerModel->GetAnimiationMatrices().data(), 0, mLawnMowerModel->GetAnimiationMatrices().size());
+		mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName( "Animation" )->Apply( 0, pd3dImmediateContext );
+		mLawnMowerModel->Render( pd3dImmediateContext );
 
 		//End of animated rendering
 		pd3dImmediateContext->IASetInputLayout(mInputLayout);
@@ -1294,12 +1339,11 @@ bool App::BuildVertexLayout(ID3D11Device *device)
 		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
 		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0},
 		{"WEIGHTS", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D11_INPUT_PER_VERTEX_DATA, 0},
-		//{"BONES", 0, DXGI_FORMAT_R32_UINT,0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0} //Correct fomat?
 		{"BONES", 0, DXGI_FORMAT_R32G32B32A32_UINT ,0, 44, D3D11_INPUT_PER_VERTEX_DATA, 0} //Correct fomat?
 	};
 
 	D3DX11_PASS_DESC animationPassDescription;
-	mFillGBufferFX->GetTechniqueByIndex(1)->GetPassByIndex(0)->GetDesc(&animationPassDescription); //hämta technique såhär ok?
+	mFillGBufferFX->GetTechniqueByName("AnimationTech")->GetPassByName("Animation")->GetDesc(&animationPassDescription); //hämta technique såhär ok?
 	if(FAILED(device->CreateInputLayout(animatedVertexDescription, 5, animationPassDescription.pIAInputSignature,
 		animationPassDescription.IAInputSignatureSize, &mAnimationInputLayout)))
 		return false;

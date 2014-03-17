@@ -27,6 +27,8 @@ public:
 	void Animate(float dt);
 	void SetCurrentClip(std::string clipName);
 	std::vector<XMFLOAT4X4> GetAnimiationMatrices();
+	void SetLoop(bool value);
+	bool GetLoop();
 
 private:
 	Vertex* ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices);
@@ -38,5 +40,6 @@ private:
 	unsigned int mVertexCount;
 	float mAnimationTime;
 	std::string mCurrentClipName;
+	bool mLoop;
 };
 #endif

@@ -4,6 +4,7 @@ AnimatedModel::AnimatedModel()
 {
 	mAnimationTime = 0;
 	mAnimation = new SkinnedData();
+	mLoop = true;
 }
 
 AnimatedModel::~AnimatedModel()
@@ -71,7 +72,17 @@ void AnimatedModel::Animate(float dt)
 	mAnimationTime += dt;
 	float clipLength = mAnimation->GetClipLength(mCurrentClipName);
 	if(mAnimationTime > clipLength)
-		mAnimationTime -= clipLength; //loop
+	{
+		if(mLoop)
+		{
+			mAnimationTime -= clipLength;	
+		}
+		else
+		{
+			mAnimationTime = clipLength;
+		}
+	}
+	
 
 	mAnimation->Animate(mCurrentClipName, mAnimationTime, mAnimationMatrices);
 }
@@ -84,6 +95,16 @@ void AnimatedModel::SetCurrentClip(std::string clipName)
 std::vector<XMFLOAT4X4> AnimatedModel::GetAnimiationMatrices()
 {
 	return mAnimationMatrices;
+}
+
+void AnimatedModel::SetLoop(bool value)
+{
+	mLoop = value;
+}
+
+bool AnimatedModel::GetLoop()
+{
+	return mLoop;
 }
 
 AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter::vertex> importedVertices)

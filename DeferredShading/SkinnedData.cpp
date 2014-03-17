@@ -71,21 +71,21 @@ void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT
 
 void SkinnedData::LoadAnimation(std::string fileName)
 {
-	//std::string binaryPath = fileName + "BINARYANIMATION";
-	//std::ifstream binaryFile(binaryPath, std::ifstream::binary);
-	//if(binaryFile.is_open())
-	//{
-	//	//Read the size here since we use a different method for opening the file in "ReadBinaryAnimation".
-	//	binaryFile.seekg (0,binaryFile.end);
-	//	size_t length = (size_t)binaryFile.tellg();
-	//	binaryFile.seekg (0, binaryFile.beg);
-	//	ReadBinaryAnimation(binaryPath, length);
-	//}
-	//else
-	//{
-	//	binaryFile.close();
+	std::string binaryPath = fileName + "BINARYANIMATION";
+	std::ifstream binaryFile(binaryPath, std::ifstream::binary);
+	if(binaryFile.is_open())
+	{
+		//Read the size here since we use a different method for opening the file in "ReadBinaryAnimation".
+		binaryFile.seekg (0,binaryFile.end);
+		size_t length = (size_t)binaryFile.tellg();
+		binaryFile.seekg (0, binaryFile.beg);
+		ReadBinaryAnimation(binaryPath, length);
+	}
+	else
+	{
+		binaryFile.close();
 		ParseAnimation(fileName);
-//	}
+	}
 }
 
 void SkinnedData::ParseAnimation(std::string fileName)
@@ -349,6 +349,9 @@ void SkinnedData::ReadBinaryAnimation(std::string fileName, size_t fileLength)
 		m_AnimationClips[clipNames[i]] = clips[i];
 	}
 
+	for( std::map<std::string, AnimationClip>::iterator it = m_AnimationClips.begin( ); it != m_AnimationClips.end( ); it++ )
+		 it->second.Cache.resize( (unsigned int)(it->second.ClipLength / 0.01 + 1.0f) );
+
 	//Cleanup
 		delete[] clipNames;
 		delete[] clips;
@@ -449,8 +452,8 @@ void SkinnedData::BoneAnimation::Interpolate(float time, XMFLOAT4X4& matrix) con
 				scale = XMVectorLerp(scale0, scale1, interpolationPercentage);
 
 				//Interpolate Position
-				XMVECTOR position0 = XMLoadFloat3(&KeyFrames[i].Scale);
-				XMVECTOR position1 = XMLoadFloat3(&KeyFrames[i+1].Scale);
+				XMVECTOR position0 = XMLoadFloat3(&KeyFrames[i].Position);
+				XMVECTOR position1 = XMLoadFloat3(&KeyFrames[i+1].Position);
 				position = XMVectorLerp(position0, position1, interpolationPercentage);
 
 				//Interpolate Quaternion (slerp)
