@@ -43,10 +43,10 @@ void Model::RenderBatch( ID3D11DeviceContext *pd3dImmediateContext, int batch )
 
 bool Model::LoadOBJ( const char *filename, bool rightHanded, ID3D11Device *device )
 {
-	//if(BinaryExists(filename))
-	//{
-	//	return Model::LoadBinary(std::string(filename), device);
-	//}
+	if(BinaryExists(filename))
+	{
+		return Model::LoadBinary(std::string(filename), device);
+	}
 
 	OBJLoader loader;
 	if (!loader.LoadOBJ(filename, rightHanded)) return false;
@@ -88,13 +88,18 @@ bool Model::LoadOBJ( const char *filename, bool rightHanded, ID3D11Device *devic
 	V(device->CreateBuffer(&vbd, &vinitData, &mVBuffer));
 
 	//Write to binary file
-//	SerializeToFile(filename, vertexData, vertexDataSize, indexData, indexSize * indices);
+	SerializeToFile(filename, vertexData, vertexDataSize, indexData, indexSize * indices);
 
 	return true;
 }
 
 bool Model::LoadGnome(const char* filename, ID3D11Device* device)
 {
+
+	if(BinaryExists(filename))
+	{
+		return Model::LoadBinary(std::string(filename), device);
+	}
 	gnomeImporter importer;
 	std::vector<gnomeImporter::vertex> vertexList;
 	std::vector<gnomeImporter::material> materialList;
@@ -135,7 +140,7 @@ bool Model::LoadGnome(const char* filename, ID3D11Device* device)
 	// Create index buffer
 	D3D11_BUFFER_DESC ibd;
 	ibd.Usage = D3D11_USAGE_IMMUTABLE;
-	ibd.ByteWidth = 4 * vertexList.size();
+	ibd.ByteWidth = 4 * vertexList.size();		//4 * vertexList Size works since an indice is 4 bytes long and there is always one indice for one vertex in .GNOME.
 	ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	ibd.CPUAccessFlags = 0;
 	ibd.MiscFlags = 0;
@@ -152,6 +157,9 @@ bool Model::LoadGnome(const char* filename, ID3D11Device* device)
 
 	mBatches.push_back(0);
 	mBatches.push_back(vertexList.size());
+
+	//Write to binary file
+	SerializeToFile(filename, vertexData, vertexDataSize, indexData, 4 * vertexList.size());	
 
 	delete[] convertedVertices;
 	delete[] indexData;
@@ -204,7 +212,7 @@ bool Model::SerializeToFile(std::string fileName, const void* vertices, unsigned
 
 	//Batch data
 	UINT* batchData = mBatches.data();
-	WriteBinary(pos, totalByteSize, bytesWritten, &batchData, sizeof(UINT) * batchCount);
+	WriteBinary(pos, totalByteSize, bytesWritten, batchData, sizeof(UINT) * batchCount);
 
 	if(bytesWritten != totalByteSize)
 	{
@@ -302,6 +310,7 @@ bool Model::LoadBinary(std::string fileName, ID3D11Device* device)
 
 	mBatches.insert(mBatches.end(), &batches[0], &batches[batchCount]);
 
+	delete[] buffer;
 	delete[] vertices;
 	delete[] indices;
 	delete[] batches;

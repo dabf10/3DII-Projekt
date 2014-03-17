@@ -49,7 +49,7 @@ struct SkinnedData::AnimationClip
 	void Interpolate(float time, std::vector <XMFLOAT4X4>& boneTransformations);
 	void Serialize(char* &pos, size_t& readCount);
 
-	//std::vector<std::vector<XMFLOAT4X4>> Cache;
+	std::vector<std::vector<XMFLOAT4X4>> Cache;
 	std::vector<BoneAnimation> BoneAnimations;
 	float ClipLength;
 };

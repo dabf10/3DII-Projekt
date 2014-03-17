@@ -90,29 +90,72 @@ AnimatedModel::Vertex* AnimatedModel::ConvertVertices(std::vector<gnomeImporter:
 {
 	Vertex* convertedVertices = new Vertex[importedVertices.size()];
 
-	for(int i = 0; i < importedVertices.size(); ++i)
+	for(int i = 0; i < importedVertices.size(); i += 3)
 	{
-		convertedVertices[i].Position.x = importedVertices[i].position[0];
-		convertedVertices[i].Position.y = importedVertices[i].position[1];
-		convertedVertices[i].Position.z = importedVertices[i].position[2];
+		convertedVertices[i].Position.x = importedVertices[i+2].position[0];
+		convertedVertices[i].Position.y = importedVertices[i+2].position[1];
+		convertedVertices[i].Position.z = -importedVertices[i+2].position[2];
 
-		convertedVertices[i].Normal.x	= importedVertices[i].normal[0];
-		convertedVertices[i].Normal.y	= importedVertices[i].normal[1];
-		convertedVertices[i].Normal.z	= importedVertices[i].normal[2];
+		convertedVertices[i].Normal.x = importedVertices[i+2].normal[0];
+		convertedVertices[i].Normal.y = importedVertices[i+2].normal[1];
+		convertedVertices[i].Normal.z = importedVertices[i+2].normal[2];
 
-		convertedVertices[i].TexCoord.x = importedVertices[i].uv[0];
-		convertedVertices[i].TexCoord.y = importedVertices[i].uv[1];
+		convertedVertices[i].TexCoord.x = importedVertices[i+2].uv[0];
+		convertedVertices[i].TexCoord.y = importedVertices[i+2].uv[1];
 
-		convertedVertices[i].Weights.x = importedVertices[i].skinWeight[0];
-		convertedVertices[i].Weights.y = importedVertices[i].skinWeight[1];
-		convertedVertices[i].Weights.z = importedVertices[i].skinWeight[2];
+		convertedVertices[i].Weights.x = importedVertices[i+2].skinWeight[0];
+		convertedVertices[i].Weights.y = importedVertices[i+2].skinWeight[1];
+		convertedVertices[i].Weights.z = importedVertices[i+2].skinWeight[2];
 
-		convertedVertices[i].Bones[0] = importedVertices[i].jointIndex[0];
-		convertedVertices[i].Bones[1] = importedVertices[i].jointIndex[1];
-		convertedVertices[i].Bones[2] = importedVertices[i].jointIndex[2];
-		convertedVertices[i].Bones[3] = importedVertices[i].jointIndex[3];
+		convertedVertices[i].Bones[0] = importedVertices[i+2].jointIndex[0];
+		convertedVertices[i].Bones[1] = importedVertices[i+2].jointIndex[1];
+		convertedVertices[i].Bones[2] = importedVertices[i+2].jointIndex[2];
+		convertedVertices[i].Bones[3] = importedVertices[i+2].jointIndex[3];
+
+		// -----------------------------
+
+		convertedVertices[i+1].Position.x = importedVertices[i+1].position[0];
+		convertedVertices[i+1].Position.y = importedVertices[i+1].position[1];
+		convertedVertices[i+1].Position.z = -importedVertices[i+1].position[2];
+
+		convertedVertices[i+1].Normal.x = importedVertices[i+1].normal[0];
+		convertedVertices[i+1].Normal.y = importedVertices[i+1].normal[1];
+		convertedVertices[i+1].Normal.z = importedVertices[i+1].normal[2];
+
+		convertedVertices[i+1].TexCoord.x = importedVertices[i+1].uv[0];
+		convertedVertices[i+1].TexCoord.y = importedVertices[i+1].uv[1];
+
+		convertedVertices[i+1].Weights.x = importedVertices[i+1].skinWeight[0];
+		convertedVertices[i+1].Weights.y = importedVertices[i+1].skinWeight[1];
+		convertedVertices[i+1].Weights.z = importedVertices[i+1].skinWeight[2];
+
+		convertedVertices[i+1].Bones[0] = importedVertices[i+1].jointIndex[0];
+		convertedVertices[i+1].Bones[1] = importedVertices[i+1].jointIndex[1];
+		convertedVertices[i+1].Bones[2] = importedVertices[i+1].jointIndex[2];
+		convertedVertices[i+1].Bones[3] = importedVertices[i+1].jointIndex[3];
+
+		// ----------------------------
+
+		convertedVertices[i+2].Position.x = importedVertices[i].position[0];
+		convertedVertices[i+2].Position.y = importedVertices[i].position[1];
+		convertedVertices[i+2].Position.z = -importedVertices[i].position[2];
+
+		convertedVertices[i+2].Normal.x = importedVertices[i].normal[0];
+		convertedVertices[i+2].Normal.y = importedVertices[i].normal[1];
+		convertedVertices[i+2].Normal.z = importedVertices[i].normal[2];
+
+		convertedVertices[i+2].TexCoord.x = importedVertices[i].uv[0];
+		convertedVertices[i+2].TexCoord.y = importedVertices[i].uv[1];
+
+		convertedVertices[i+2].Weights.x = importedVertices[i].skinWeight[0];
+		convertedVertices[i+2].Weights.y = importedVertices[i].skinWeight[1];
+		convertedVertices[i+2].Weights.z = importedVertices[i].skinWeight[2];
+
+		convertedVertices[i+2].Bones[0] = importedVertices[i].jointIndex[0];
+		convertedVertices[i+2].Bones[1] = importedVertices[i].jointIndex[1];
+		convertedVertices[i+2].Bones[2] = importedVertices[i].jointIndex[2];
+		convertedVertices[i+2].Bones[3] = importedVertices[i].jointIndex[3];
 	}
 
 	return convertedVertices;
 }
-

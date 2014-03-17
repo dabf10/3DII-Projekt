@@ -14,7 +14,7 @@ class AnimatedModel
 		XMFLOAT3		Position;
 		XMFLOAT2		TexCoord;
 		XMFLOAT3		Normal;
-		XMFLOAT4		Weights;
+		XMFLOAT3		Weights;
 		unsigned int	Bones[4];
 	};
 

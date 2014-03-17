@@ -2,6 +2,9 @@ cbuffer cbPerObject
 {
 	float4x4 gWVP;
 	float4x4 gWorldViewInvTrp;
+};
+cbuffer cbSkinned
+{
 	float4x4 gBoneTransforms[96];
 };
 

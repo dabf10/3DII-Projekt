@@ -13,23 +13,24 @@ SkinnedData::~SkinnedData(void)
 
 void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT4X4>& transformations)
 {
-	std::map<std::string, SkinnedData::AnimationClip>::iterator clip = m_AnimationClips.find(clipName); //This gets the whole keyValPair but that will do.
+	//std::map<std::string, SkinnedData::AnimationClip>::iterator clip = m_AnimationClips.find(clipName); //This gets the whole keyValPair but that will do.
+	auto clip = m_AnimationClips.find(clipName); //This gets the whole keyValPair but that will do.
 
 	//	// Get cache index
-	//int cacheIndex = (int)( time / CACHE_TIME_STEP );
+	int cacheIndex = (int)( time / 0.01f );
 
-	//// Detect overflow in index
-	//if( clip->second.AnimationCache.size( ) <= (unsigned int)cacheIndex )
-	//	cacheIndex = clip->second.AnimationCache.size( ) - 1;
+	// Detect overflow in index
+	if( clip->second.Cache.size( ) <= (unsigned int)cacheIndex )
+		cacheIndex = clip->second.Cache.size( ) - 1;
 
-	//	// Select cache or set time to create cache from
-	//if( clip->second.AnimationCache[cacheIndex].size( ) == 0 )
-	//	time = cacheIndex * CACHE_TIME_STEP;
-	//else
-	//{
-	//	transforms = clip->second.AnimationCache[ cacheIndex ];
-	//	return;
-	//}
+		// Select cache or set time to create cache from
+	if( clip->second.Cache[cacheIndex].size( ) == 0 )
+		time = cacheIndex * 0.01f;
+	else
+	{
+		transformations = clip->second.Cache[ cacheIndex ];
+		return;
+	}
 
 	//Initialize
 	unsigned int boneCount = m_BoneOffsets.size();
@@ -53,6 +54,8 @@ void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT
 		XMMATRIX parentToRoot = XMLoadFloat4x4(&toRootTransformations[parentIndex]);
 
 		XMMATRIX toRoot = XMMatrixMultiply(toParent, parentToRoot);
+
+		XMStoreFloat4x4( &toRootTransformations[i], toRoot );
 	}
 
 	//return
@@ -63,26 +66,26 @@ void SkinnedData::Animate(std::string& clipName, float time, std::vector<XMFLOAT
 		XMStoreFloat4x4(& transformations[i], XMMatrixMultiply(offset, toRoot));
 	}
 
-	//clip->second.AnimationCache[ cacheIndex ] = std::vector<XMFLOAT4X4>( transforms );
+	clip->second.Cache[ cacheIndex ] = std::vector<XMFLOAT4X4>( transformations );
 }
 
 void SkinnedData::LoadAnimation(std::string fileName)
 {
-	std::string binaryPath = fileName + "BINARYANIMATION";
-	std::ifstream binaryFile(binaryPath, std::ifstream::binary);
-	if(binaryFile.is_open())
-	{
-		//Read the size here since we use a different method for opening the file in "ReadBinaryAnimation".
-		binaryFile.seekg (0,binaryFile.end);
-		size_t length = (size_t)binaryFile.tellg();
-		binaryFile.seekg (0, binaryFile.beg);
-		ReadBinaryAnimation(binaryPath, length);
-	}
-	else
-	{
-		binaryFile.close();
+	//std::string binaryPath = fileName + "BINARYANIMATION";
+	//std::ifstream binaryFile(binaryPath, std::ifstream::binary);
+	//if(binaryFile.is_open())
+	//{
+	//	//Read the size here since we use a different method for opening the file in "ReadBinaryAnimation".
+	//	binaryFile.seekg (0,binaryFile.end);
+	//	size_t length = (size_t)binaryFile.tellg();
+	//	binaryFile.seekg (0, binaryFile.beg);
+	//	ReadBinaryAnimation(binaryPath, length);
+	//}
+	//else
+	//{
+	//	binaryFile.close();
 		ParseAnimation(fileName);
-	}
+//	}
 }
 
 void SkinnedData::ParseAnimation(std::string fileName)
@@ -157,8 +160,8 @@ void SkinnedData::ParseAnimation(std::string fileName)
 	}
 
 	// Allocate memory for the cache (resize the vector)
-	//for( std::map<std::string, AnimationClip>::iterator it = m_Animations.begin( ); it != m_Animations.end( ); it++ )
-	//	 it->second.AnimationCache.resize( (unsigned int)(it->second.ClipLength / CACHE_TIME_STEP + 1.0f) );
+	for( std::map<std::string, AnimationClip>::iterator it = m_AnimationClips.begin( ); it != m_AnimationClips.end( ); it++ )
+		 it->second.Cache.resize( (unsigned int)(it->second.ClipLength / 0.01 + 1.0f) );
 
 	WriteSerializedAnimation(fileName);
 	file.close( );
@@ -415,7 +418,7 @@ SkinnedData::BoneAnimation::~BoneAnimation(void)
 void SkinnedData::BoneAnimation::Interpolate(float time, XMFLOAT4X4& matrix) const
 {
 	XMVECTOR scale = XMVECTOR();
-	XMVECTOR position;
+	XMVECTOR position = XMVECTOR();
 	XMVECTOR quaternion = XMVECTOR();
 	XMVECTOR zero = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
 
